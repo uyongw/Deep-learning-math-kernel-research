@@ -1,3 +1,4 @@
+#include "el_parallel.hpp"
 #include "elx_conv_wino_lp.hpp"
 
 namespace euler {
@@ -39,7 +40,7 @@ Template_elx_conv_wino_lp_t Instance_elx_conv_wino_lp_t::elx_conv_wino_lp_t(
 
   is_first_run_ = true;
   inference_acc_ = false;
-  mthr_ = omp_get_max_threads();
+  mthr_ = el_get_max_threads();
   if (this->nthreads == 0 || this->nthreads > mthr_) {
     this->nthreads = mthr_;
   } else {
@@ -220,39 +221,24 @@ int Instance_elx_conv_wino_lp_t::prepare_execute_opt()
   tweights_quant_scale_size_ = tweights_quant_scale_size > 0 ? alignup(tweights_quant_scale_size, align) : 0;
   tweights_quant_factor_size_ = tweights_quant_factor_size > 0 ? alignup(tweights_quant_factor_size, align) : 0;
 
-  workspace_ = nullptr, scratch_ = nullptr;
   workspace_size_ = tweights_size_ + tweights_s8_size_
       + tweights_quant_scale_size_ + tweights_quant_factor_size_;
-  size_t scratch_size = estl::max(tinput_size_, toutput_size_)
+  scratch_size_ = estl::max(tinput_size_, toutput_size_)
       + binput_size_ + bweights_size_ + boutput_size_ + tinput_u8_size_;
 
   if (this->sampling_kind == CALIBRATED)
     workspace_size_ += tinput_quant_scale_size_;
   else
-    scratch_size += tinput_quant_scale_size_;
+    scratch_size_ += tinput_quant_scale_size_;
 
-  // TODO: user provided buffer
-  workspace_ = nullptr;
-  if (scratch_size != 0)
-    scratch_ = galloc::acquire(scratch_size);
-
-  // dbg
-  printf("nthreads=%d, mthr_=%d\n", this->nthreads, mthr_);
-  printf("sampling_kind = %d\n", this->sampling_kind);
-  printf("input_quant_S = %f\n", this->input_quant_S);
-  printf("input_quant_z = %f\n", this->input_quant_z);
-  printf("tinput_quant_S = %f\n", this->tinput_quant_S);
-  printf("tinput_quant_z = %f\n", this->tinput_quant_z);
-  printf("output_quant_S = %f\n", this->output_quant_S);
-  printf("output_quant_z = %f\n", this->output_quant_z);
   return 0;
 }
 
 Template_elx_conv_wino_lp_t
-void Instance_elx_conv_wino_lp_t::set_workspace_buffers()
+void Instance_elx_conv_wino_lp_t::set_workspace_buffers(void *base)
 {
-  if (workspace_ != nullptr) {
-    tweights_ = (TweightsType *)workspace_;
+  if (base != nullptr) {
+    tweights_ = (TweightsType *)base;
     // int8gemm supported in weights reuse case only.
     tweights_quant_scale_ = (TscaleType *)((char *)tweights_ + tweights_size_);
     tweights_quant_factor_ = (TscaleType *)((char *)tweights_quant_scale_ + tweights_quant_scale_size_);
@@ -266,18 +252,20 @@ void Instance_elx_conv_wino_lp_t::set_workspace_buffers()
 }
 
 Template_elx_conv_wino_lp_t
-void Instance_elx_conv_wino_lp_t::set_scratchpad_buffers()
+void Instance_elx_conv_wino_lp_t::set_scratch_buffers(void *base)
 {
-  tinput_ = (TinputType *)galloc::get();
-  toutput_ = (ToutputType *)tinput_;
-  binput_ = (InputType *)((char *)toutput_ + estl::max(tinput_size_, toutput_size_));
-  bweights_ = (WeightsType *)((char *)binput_ + binput_size_);
-  boutput_ = (OutputType *)((char *)bweights_ + bweights_size_);
-  if (this->sampling_kind == CALIBRATED) {
-    tinput_u8_ = (uint8_t *)((char *)boutput_ + boutput_size_);
-  } else {
-    tinput_quant_scale_ = (TscaleType *)((char *)boutput_ + boutput_size_);
-    tinput_u8_ = (uint8_t *)((char *)tinput_quant_scale_ + tinput_quant_scale_size_);
+  if (base != nullptr) {
+    tinput_ = (TinputType *)base;
+    toutput_ = (ToutputType *)tinput_;
+    binput_ = (InputType *)((char *)toutput_ + estl::max(tinput_size_, toutput_size_));
+    bweights_ = (WeightsType *)((char *)binput_ + binput_size_);
+    boutput_ = (OutputType *)((char *)bweights_ + bweights_size_);
+    if (this->sampling_kind == CALIBRATED) {
+      tinput_u8_ = (uint8_t *)((char *)boutput_ + boutput_size_);
+    } else {
+      tinput_quant_scale_ = (TscaleType *)((char *)boutput_ + boutput_size_);
+      tinput_u8_ = (uint8_t *)((char *)tinput_quant_scale_ + tinput_quant_scale_size_);
+    }
   }
 }
 
@@ -302,45 +290,9 @@ void Instance_elx_conv_wino_lp_t::prepare_quant_calibration(eld_conv_t &dc)
   }
 }
 
-Template_elx_conv_wino_lp_t void Instance_elx_conv_wino_lp_t::
-trans_weights(WeightsType *weights) {
-  if (inference_acc_ && this->shared_workspace_enabled) {
-    const char *key = this->shared_workspace_key.c_str();
-    process_singleton_t process_singleton(key);
-    {
-      this->shared_workspace_mgr =
-        new shared_workspace_mgr_t(this->workspace_size_, key);
-      workspace_ = this->shared_workspace_mgr->get();
-      set_workspace_buffers();
-      if (!this->shared_workspace_mgr->is_setup_done()) {
-        trans_weights_s8(tweights_quant_scale_, tweights_quant_factor_,
-                         tweights_s8_, tweights_, weights, this->oc4);
-        this->shared_workspace_mgr->set_setup_done();
-      }
-    }
-  } else {
-    MEMALIGN64(&workspace_, workspace_size_);
-    set_workspace_buffers();
-    trans_weights_s8(tweights_quant_scale_, tweights_quant_factor_,
-                     tweights_s8_, tweights_, weights, this->oc4);
-  }
-}
-
 Template_elx_conv_wino_lp_t
 Instance_elx_conv_wino_lp_t::~elx_conv_wino_lp_t()
 {
-  if (workspace_ != nullptr && !this->shared_workspace_enabled) {
-    ::free(workspace_);
-    workspace_ = nullptr;
-  } else {
-    if (this->shared_workspace_mgr != nullptr) {
-      delete this->shared_workspace_mgr;
-      this->shared_workspace_mgr = nullptr;
-    }
-    workspace_ = nullptr;
-  }
-
-  galloc::release();
 }
 
 } // namespace euler

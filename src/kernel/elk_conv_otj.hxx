@@ -209,8 +209,10 @@ struct conv_kernel_otj<GarrayTypes, V, Vx, ISA_SKX_AVX512,
               ? &md2(aoutput_blocked1, _T, 0) : &md3(aoutput_nhwc1, 0, _O, 0);
 
     if (get_attr(attr, relu_idx)) {
-      __m<V> zero = _mm<V>::setzero_ps();
-      res = _mm<V>::max_ps(res, zero);
+      auto lower = *(__m<V> *)(xc.relu_bound_lower_vec);
+      auto upper = *(__m<V> *)(xc.relu_bound_upper_vec);
+      res = _mm<V>::max_ps(res, lower);
+      res = _mm<V>::min_ps(res, upper);
     }
     if (get_attr(attr, s_output_idx)) {
       if (std::is_same<OutputType, float>::value) {
@@ -249,8 +251,10 @@ struct conv_kernel_otj<GarrayTypes, V, Vx, ISA_SKX_AVX512,
     assert(F_traits<F>::is_nhwc_output);
 
     if (get_attr(attr, relu_idx)) {
-      __m<V> zero = _mm<V>::setzero_ps();
-      res = _mm<V>::max_ps(res, zero);
+      auto lower = *(__m<V> *)(xc.relu_bound_lower_vec);
+      auto upper = *(__m<V> *)(xc.relu_bound_upper_vec);
+      res = _mm<V>::max_ps(res, lower);
+      res = _mm<V>::min_ps(res, upper);
     }
     if (std::is_same<OutputType, float>::value) {
       _mm512_mask_store_ps(aout, k, res);
@@ -450,11 +454,11 @@ struct conv_kernel_otj<GarrayTypes, V, Vx, ISA_SKX_AVX512,
         if (pad_l) {
           int _kw = 0; // K = 3, 5, 7
           gemm_OVxT(input, &md3(aweights, _kh, _kw, 0), V, _kh, _kw, _I2);
-          if (K > 3) {
+          if (pad_l > 1 && K > 3) {
             _kw = 1; // K = 5, 7
             gemm_OVxxT(input, &md3(aweights, _kh, _kw, 0), V, _kh, _kw, _I2);
           }
-          if (K > 5) {
+          if (pad_l > 2 && K > 5) {
             _kw = 2; // K = 7
             gemm_OVxxxT(input, &md3(aweights, _kh, _kw, 0), V, _kh, _kw, _I2);
           }
@@ -463,11 +467,11 @@ struct conv_kernel_otj<GarrayTypes, V, Vx, ISA_SKX_AVX512,
         if (pad_r) {
           int _kw = K - 1; // K = 3, 5, 7
           gemm_OVTx(input, &md3(aweights, _kh, _kw, 0), V, _kh, _kw, _I2);
-          if (K > 3) {
+          if (pad_r > 1 && K > 3) {
             _kw = K - 2; // K = 5, 7
             gemm_OVTxx(input, &md3(aweights, _kh, _kw, 0), V, _kh, _kw, _I2);
           }
-          if (K > 5) {
+          if (pad_r > 2 && K > 5) {
             _kw = K - 3; // K = 7
             gemm_OVTxxx(input, &md3(aweights, _kh, _kw, 0), V, _kh, _kw, _I2);
           }
@@ -485,11 +489,11 @@ struct conv_kernel_otj<GarrayTypes, V, Vx, ISA_SKX_AVX512,
         if (pad_l) {
           int _kw = 0; // K = 3, 5, 7
           gemm_OVxT(input, &md3(aweights, _kh, _kw, 0), Ir, _kh, _kw, _I2);
-          if (K > 3) {
+          if (pad_l > 1 && K > 3) {
             _kw = 1; // K = 5, 7
             gemm_OVxxT(input, &md3(aweights, _kh, _kw, 0), Ir, _kh, _kw, _I2);
           }
-          if (K > 5) {
+          if (pad_l > 2 && K > 5) {
             _kw = 2; // K = 7
             gemm_OVxxxT(input, &md3(aweights, _kh, _kw, 0), Ir, _kh, _kw, _I2);
           }
@@ -498,11 +502,11 @@ struct conv_kernel_otj<GarrayTypes, V, Vx, ISA_SKX_AVX512,
         if (pad_r) {
           int _kw = K - 1; // K = 3, 5, 7
           gemm_OVTx(input, &md3(aweights, _kh, _kw, 0), Ir, _kh, _kw, _I2);
-          if (K > 3) {
+          if (pad_r > 1 && K > 3) {
             _kw = K - 2; // K = 5, 7
             gemm_OVTxx(input, &md3(aweights, _kh, _kw, 0), Ir, _kh, _kw, _I2);
           }
-          if (K > 5) {
+          if (pad_r > 2 && K > 5) {
             _kw = K - 3; // K = 7
             gemm_OVTxxx(input, &md3(aweights, _kh, _kw, 0), Ir, _kh, _kw, _I2);
           }

@@ -12,7 +12,7 @@ Instance_elx_conv_direct_vmg_t::elx_conv_direct_vmg_t(eld_conv_t &dc)
 {
   // user input
   xopt_ = this->execution_mode;
-  mthr_ = omp_get_max_threads();
+  mthr_ = el_get_max_threads();
 
   this->G = 1;
   this->vmg = 1;
@@ -135,8 +135,6 @@ int Instance_elx_conv_direct_vmg_t::prepare_execute_opt()
   tweights_size_ = 0;
   tweights_ = nullptr;
   toutput_ = nullptr;
-  scratch_ = nullptr;
-  workspace_ = nullptr;
 
   switch (xopt_) {
   case 0xa060:
@@ -152,32 +150,27 @@ int Instance_elx_conv_direct_vmg_t::prepare_execute_opt()
   if (tweights_size_ > 0)
     tweights_size_ += WEIGHTS_MAX_PRELOAD * V;
 
-  size_t workspace_size = tweights_size_;
-  // TODO: user provided buffer
-  if (workspace_size != 0) {
-    MEMALIGN64(&workspace_, workspace_size);
-    tweights_ = (TweightsType *)workspace_;
-  }
-  size_t scratchpad_size = 0;
-  if (scratchpad_size != 0) {
-    scratch_ = galloc::acquire(scratchpad_size);
-  }
+  workspace_size_ = tweights_size_;
+  scratch_size_ = 0;
 
   return 0;
 }
 
 Template_elx_conv_direct_vmg_t
-void Instance_elx_conv_direct_vmg_t::set_trans_buffers()
+void Instance_elx_conv_direct_vmg_t::set_workspace_buffers(void *base)
+{
+  if (base != nullptr)
+    tweights_ = (TweightsType *)base;
+}
+
+Template_elx_conv_direct_vmg_t
+void Instance_elx_conv_direct_vmg_t::set_scratch_buffers(void *base)
 {
 }
 
 Template_elx_conv_direct_vmg_t
 Instance_elx_conv_direct_vmg_t::~elx_conv_direct_vmg_t()
 {
-  if (workspace_ != nullptr)
-    ::free(workspace_);
-
-  galloc::release();
 }
 
 // weights: g, G, kh, kw, C(i), C(o)
@@ -190,7 +183,7 @@ void Instance_elx_conv_direct_vmg_t::trans_weights_to_compact(
     parallel_for<4>(mthr_, [&](int _g, int _kh, int _kw, int _iV) {
       MD6(WeightsType, aweights, weights, this->g, G, this->kh, this->kw, C, C);
       MD5(TweightsType, atweights, tweights, this->g, this->kh, this->kw, C, V);
-      WeightsType w[V];
+      WeightsType w[V] = { 0 };
       iter_each (_G, G) {
         iter_each (_oV, C) {
           w[_G * C + _oV] = md6(aweights, _g, _G, _kh, _kw, _iV, _oV);

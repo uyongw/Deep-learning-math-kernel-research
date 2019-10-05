@@ -4,6 +4,7 @@
 #include "euler.hpp"
 #include "el_def.hpp"
 #include "el_utils.hpp"
+#include "el_allocator.hpp"
 #include "elx_conv.hpp"
 #include "kernel/elk_conv_otj_binder.hxx"
 
@@ -47,7 +48,8 @@ Template_elx_deconv_direct_t class elx_deconv_direct_t : public elx_conv_t {
   void conv_a060(OutputType *output, InputType *input, TweightsType *weights,
       BiasType *bias, int _ic4, int _oc4, int _ht, int _wt);
 
-  void set_trans_buffers();
+  void set_workspace_buffers(void *base);
+  void set_scratch_buffers(void *base);
   int prepare_execute_opt();
   void bind_execute_functions();
 
@@ -69,8 +71,6 @@ Template_elx_deconv_direct_t class elx_deconv_direct_t : public elx_conv_t {
   unsigned int xopt_;
   int attr_;
   int mthr_;
-  void *scratch_;
-  void *workspace_;
 };
 
 // fp32-f32f32f32

@@ -1,6 +1,5 @@
 #include "elx_conv_direct_1x1_lp.hpp"
 #include "el_parallel.hpp"
-#include "el_shared_workspace.hpp"
 
 namespace euler {
 
@@ -99,7 +98,7 @@ Instance_elx_conv_direct_1x1_lp_t::elx_conv_direct_1x1_lp_t(eld_conv_t &dc)
   attr_ = set_attr(attr_, fma_opt_idx);
   is_first_run_ = true;
   inference_acc_ = false;
-  mthr_ = omp_get_max_threads();
+  mthr_ = el_get_max_threads();
   inference_acc_ = this->prop_kind == forward_inference;
 
   attr_ = this->with_bias ? set_attr(attr_, bias_idx) : attr_;
@@ -187,47 +186,35 @@ int Instance_elx_conv_direct_1x1_lp_t::prepare_execute_opt()
   input_scale_size_ = input_scale_size > 0 ? alignup(input_scale_size, align) : 0;
   weights_scale_size_ = weights_scale_size > 0 ? alignup(weights_scale_size, align) : 0;
 
-  scratch_ = nullptr;
-  workspace_ = nullptr;
   workspace_size_ = tweights_size_ + tweights_s8_size_
       + weights_scale_size_ + input_scale_size_;
-  size_t scratch_size = tinput_size_ + toutput_size_
+  scratch_size_ = tinput_size_ + toutput_size_
       + binput_size_ + bweights_size_ + boutput_size_;
-  // TODO: user provided buffer
-  if (scratch_size != 0)
-    scratch_ = galloc::acquire(scratch_size);
 
-  workspace_ = nullptr;
-
-  // dbg
-  printf("nthreads=%d, mthr_=%d\n", this->nthreads, mthr_);
-  printf("sampling_kind = %d\n", this->sampling_kind);
-  printf("input_quant_S = %f\n", this->input_quant_S);
-  printf("input_quant_z = %f\n", this->input_quant_z);
-  printf("output_quant_S = %f\n", this->output_quant_S);
-  printf("output_quant_z = %f\n", this->output_quant_z);
-  printf("sum_quant_S = %f\n", this->sum_quant_S);
-  printf("sum_quant_z = %f\n", this->sum_quant_z);
   return 0;
 }
 
 Template_elx_conv_direct_1x1_lp_t
-void Instance_elx_conv_direct_1x1_lp_t::set_scratchpad_buffers()
+void Instance_elx_conv_direct_1x1_lp_t::set_scratch_buffers(void *base)
 {
-  tinput_ = (TinputType *)galloc::get();
-  toutput_ = (ToutputType *)((char *)tinput_ + tinput_size_);
-  binput_ = (InputType *)((char *)toutput_ + toutput_size_);
-  bweights_ = (WeightsType *)((char *)binput_ + binput_size_);
-  boutput_ = (OutputType *)((char *)bweights_ + bweights_size_);
+  if (base != nullptr) {
+    tinput_ = (TinputType *)base;
+    toutput_ = (ToutputType *)((char *)tinput_ + tinput_size_);
+    binput_ = (InputType *)((char *)toutput_ + toutput_size_);
+    bweights_ = (WeightsType *)((char *)binput_ + binput_size_);
+    boutput_ = (OutputType *)((char *)bweights_ + bweights_size_);
+  }
 }
 
 Template_elx_conv_direct_1x1_lp_t
-void Instance_elx_conv_direct_1x1_lp_t::set_workspace_buffers()
+void Instance_elx_conv_direct_1x1_lp_t::set_workspace_buffers(void *base)
 {
-  tweights_ = (TweightsType *)workspace_;
-  input_scale_ = (TscaleType *)((char *)tweights_ + tweights_size_);
-  weights_scale_ = (TscaleType *)((char *)input_scale_ + input_scale_size_);
-  tweights_s8_ = (int8_t *)((char *)weights_scale_ + weights_scale_size_);
+  if (base != nullptr) {
+    tweights_ = (TweightsType *)base;
+    input_scale_ = (TscaleType *)((char *)tweights_ + tweights_size_);
+    weights_scale_ = (TscaleType *)((char *)input_scale_ + input_scale_size_);
+    tweights_s8_ = (int8_t *)((char *)weights_scale_ + weights_scale_size_);
+  }
 }
 
 Template_elx_conv_direct_1x1_lp_t
@@ -249,22 +236,10 @@ void Instance_elx_conv_direct_1x1_lp_t::prepare_quant_calibration(eld_conv_t &dc
 Template_elx_conv_direct_1x1_lp_t
 Instance_elx_conv_direct_1x1_lp_t::~elx_conv_direct_1x1_lp_t()
 {
-  if (workspace_ != nullptr && !this->shared_workspace_enabled) {
-    ::free(workspace_);
-    workspace_ = nullptr;
-  } else {
-    if (this->shared_workspace_mgr != nullptr) {
-      delete this->shared_workspace_mgr;
-      this->shared_workspace_mgr = nullptr;
-    }
-    workspace_ = nullptr;
-  }
-
-  galloc::release();
 }
 
 Template_elx_conv_direct_1x1_lp_t
-void Instance_elx_conv_direct_1x1_lp_t::__trans_weights_s8_blocked_oc(
+void Instance_elx_conv_direct_1x1_lp_t::trans_weights_s8_blocked_oc(
     TscaleType *weights_scale, int8_t *tweights_s8, WeightsType *weights,
     BiasType *bias)
 {
@@ -377,37 +352,6 @@ void Instance_elx_conv_direct_1x1_lp_t::__trans_weights_s8_blocked_oc(
 }
 
 Template_elx_conv_direct_1x1_lp_t
-void Instance_elx_conv_direct_1x1_lp_t::trans_weights_s8_oc(
-    WeightsType *weights, BiasType *bias)
-{
-  auto transform_weights = [&]() {
-    if (weights_is_bfmt_ || weights_as_bfmt_)
-      __trans_weights_s8_blocked_oc(weights_scale_, tweights_s8_, weights, bias);
-    else
-      el_error("Unimplement format");
-  };
-
-  if (inference_acc_ && this->shared_workspace_enabled) {
-    const char *key = this->shared_workspace_key.c_str();
-    process_singleton_t process_singleton(key);
-    {
-      this->shared_workspace_mgr =
-        new shared_workspace_mgr_t(this->workspace_size_, key);
-      workspace_ = this->shared_workspace_mgr->get();
-      set_workspace_buffers();
-      if (!this->shared_workspace_mgr->is_setup_done()) {
-        transform_weights();
-        this->shared_workspace_mgr->set_setup_done();
-      }
-    }
-  } else {
-    MEMALIGN64(&workspace_, workspace_size_);
-    set_workspace_buffers();
-    transform_weights();
-  }
-}
-
-Template_elx_conv_direct_1x1_lp_t
 void Instance_elx_conv_direct_1x1_lp_t::requant_output(
     OutputType *output, ToutputType *toutput)
 {
@@ -464,12 +408,11 @@ void Instance_elx_conv_direct_1x1_lp_t::gemm_b161(ToutputType *toutput,
     int attr = _ic4 == 0 && _ic3 == 0
         ? set_attr(attr_, r_output_idx)
         : attr_;
-    attr = this->with_relu && _ic4 == this->ic4 - 1 && _ic3 == this->ic3 - 1
-        ? set_attr(attr, relu_idx)
-        : attr;
-    attr = _ic4 == this->ic4 - 1 && _ic3 == this->ic3 - 1
-        ? set_attr(attr, c_output_idx)
-        : attr;
+    if (_ic4 == this->ic4 - 1 && _ic3 == this->ic3 - 1) {
+      if (this->with_relu)
+        attr = set_attr(attr, relu_idx);
+      attr = set_attr(attr, c_output_idx);
+    }
     auto ain = this->input_fmt == nhwc
         ? &md2(ainput_nhwc, _ic3, 0) : &md2(ainput_blocked, _ic3, 0);
     iter_each (_oc3, this->oc3) {
@@ -524,12 +467,12 @@ void Instance_elx_conv_direct_1x1_lp_t::gemm_c160(ToutputType *toutput,
     int attr = _ic4 == 0 && _ic3 == 0
         ? set_attr(attr_, r_output_idx)
         : attr_;
-    attr = this->with_relu && _ic4 == this->ic4 - 1 && _ic3 == this->ic3 - 1
-        ? set_attr(attr, relu_idx)
-        : attr;
-    attr = _ic4 == this->ic4 - 1 && _ic3 == this->ic3 - 1
-        ? set_attr(attr, c_output_idx)
-        : attr;
+
+    if (_ic4 == this->ic4 - 1 && _ic3 == this->ic3 - 1) {
+      if (this->with_relu)
+        attr = set_attr(attr, relu_idx);
+      attr = set_attr(attr, c_output_idx);
+    }
 
     auto ain = this->input_fmt == nhwc
              ? &md3(ainput2_nhwc, _ic4, _ic3, 0)

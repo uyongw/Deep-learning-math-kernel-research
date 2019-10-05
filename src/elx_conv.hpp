@@ -3,7 +3,7 @@
 #include <mutex>
 #include "euler.hpp"
 #include "el_def.hpp"
-#include "el_shared_workspace.hpp"
+#include "el_allocator.hpp"
 
 namespace euler {
 
@@ -18,9 +18,9 @@ struct elx_conv_params_t {
   // dimensions
   int g, ic, oc, ih, iw, oh, ow, n, t, kh, kw;
   // dimensions in packed unit
-  int ic2, oc2, ih2, iw2, oh2, ow2, t2;
+  int g2, ic2, oc2, ih2, iw2, oh2, ow2, t2;
   // dimensions in pack-in-pack unit
-  int ic3, oc3, ih3, iw3, oh3, ow3, t3;
+  int g3, ic3, oc3, ih3, iw3, oh3, ow3, t3;
   // dimensions in tripple level packed unit
   int ic4, oc4;
   // redundant dim size
@@ -36,9 +36,9 @@ struct elx_conv_params_t {
   // register working set
   int T;
   // padding (IC/OC) & tailing dimensions: Ir, Or, Tr
-  int IC, OC, Ir, Or, Tr, O2r, oc3r;
+  int G, IC, OC, Ir, Or, Tr, O2r, oc3r;
   // 2nd/r3d level cache blocking unit(in pack) to ic, oc
-  int I2, O, O1, O2, I3, O3;
+  int G2, I2, O, O1, O2, I3, O3;
   // padding
   int lp, rp, tp, bp;
   // stride
@@ -90,31 +90,68 @@ struct elx_conv_params_t {
   float output_quant_repS;
   float sum_quant_S;
   float sum_quant_z;
+  float relu_bound_lower;
+  float relu_bound_upper;
   sampling_kind_t sampling_kind;
 
-  bool verbose;
   bool eager_mode;
   bool stream_sync;
 
-  bool                    shared_workspace_enabled;
-  std::string             shared_workspace_key; 
-  shared_workspace_mgr_t *shared_workspace_mgr;
+  std::string name;
+  std::string shared_workspace_key;
+  bool shared_workspace_enabled;
 
   void *scratch_pad;
   void *output_ptr, *input_ptr, *weights_ptr, *bias_ptr;
   std::mutex mu;
+
+  // Redundant data for performance
+  alignas(64) float relu_bound_lower_vec[16];
+  alignas(64) float relu_bound_upper_vec[16];
+  alignas(64) float sum_quant_S_vec[16];
 };
 
 struct elx_conv_t : elx_conv_params_t {
 public:
   elx_conv_t(eld_conv_t &dc);
 
-  void set_data(void *output, void *input, void *weights, void *bias);
-  void timed_execute(void *output, void *input, void *weights, void *bias);
+  void set_user_buffers(void *output, void *input, void *weights, void *bias);
+  void set_scratch_buffers();
+  void set_workspace_buffers();
 
-  virtual void execute(
-      void *output, void *input, void *weights, void *bias) = 0;
-  virtual ~elx_conv_t() {}
+  void execute_verbose(void *output, void *input, void *weights, void *bias);
+  virtual void execute(void *output, void *input, void *weights, void *bias) = 0;
+  virtual ~elx_conv_t();
+  void teardown();
+  bool on_destroy() { return on_destroy_; }
+  template <typename F> void setup_workspace(F func) {
+    if (this->prop_kind == forward_inference
+        && this->shared_workspace_enabled) {
+      const char *key = this->shared_workspace_key.c_str();
+      process_singleton_t process_singleton(key);
+      {
+        set_workspace_buffers();
+        if (!shwalloc::is_setup_done(workspace_)) {
+          func();
+          shwalloc::set_setup_done(workspace_);
+        }
+      }
+    } else {
+      set_workspace_buffers();
+      func();
+    }
+  }
+
+  size_t scratch_size_;
+  size_t workspace_size_;
+
+private:
+  virtual void set_workspace_buffers(void *base) = 0;
+  virtual void set_scratch_buffers(void *base) = 0;
+
+  void *workspace_;
+  bool has_scratch_;
+  bool on_destroy_;
 };
 
 }  // namespace euler

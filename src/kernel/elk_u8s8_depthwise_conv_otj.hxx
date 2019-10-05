@@ -239,7 +239,10 @@ struct u8s8_depthwise_conv_kernel_otj<GarrayTypes, RoutputType, V, Vx,
 
     // fuse relu
     if (get_attr(attr, relu_idx)) {
-      fout = _mm<V>::max_ps(fout, _mm<V>::setzero_ps());
+      auto lower = *(__m<V> *)(xc.relu_bound_lower_vec);
+      auto upper = *(__m<V> *)(xc.relu_bound_upper_vec);
+      fout = _mm<V>::max_ps(fout, lower);
+      fout = _mm<V>::min_ps(fout, upper);
     }
     // store output
     if (std::is_same<RoutputType, uint8_t>::value
@@ -274,12 +277,15 @@ struct u8s8_depthwise_conv_kernel_otj<GarrayTypes, RoutputType, V, Vx,
 
     // fuse relu
     if (get_attr(attr, relu_idx)) {
-      fout = _mm<V>::max_ps(fout, _mm<V>::setzero_ps());
+      auto lower = *(__m<V> *)(xc.relu_bound_lower_vec);
+      auto upper = *(__m<V> *)(xc.relu_bound_upper_vec);
+      fout = _mm<V>::max_ps(fout, lower);
+      fout = _mm<V>::min_ps(fout, upper);
     }
 
     // return output
     __i<V> u32 = _mm<V>::cvt_roundps_epi32(
-        fout, _MM_FROUND_TO_NEAREST_INT  | _MM_FROUND_NO_EXC);
+        fout, _MM_FROUND_TO_NEG_INF | _MM_FROUND_NO_EXC);
     return u32;
   }
 
@@ -312,7 +318,7 @@ struct u8s8_depthwise_conv_kernel_otj<GarrayTypes, RoutputType, V, Vx,
     MD2(ScaleType, aweights_factor, weights_factor, xc.ic2, V);
     MD2(RoutputType, aroutput, routput, xc.ic2, xc.oh * xc.ow * V);
 
-    for (int _g2 = 0; _g2 < xc.ic2; ++_g2) {
+    for (int _g2 = 0; _g2 < xc.g2; ++_g2) {
       // clear output
       unroll_for (_T, T) {
         mmout[_T] = _mm<V>::setzero_epi32();;

@@ -28,7 +28,9 @@ void Instance_elx_conv_direct_t::__execute_a060(
   // output (blocked):  t3*, oc4*, oc3, O2(O2r), ht*wt*, T, V
   // output (nhwc):  t3*, ht*wt*, T, oc4*, oc3, O2(O2r), V
   if (is_first_run_) {
-    trans_weights_to_compact(tweights_, weights);
+    setup_workspace([&]() {
+      trans_weights_to_compact(tweights_, weights);
+    });
   }
 
   if (this->input_fmt == nchw) { // nchw => blocked
@@ -102,15 +104,17 @@ void Instance_elx_conv_direct_t::__execute_b060(
   // output (blocked):  t3*, oc4*, oc3, O2(O2r), ht*wt*, T, V
   // output (nhwc):  t3*, ht*wt*, T, oc4*, oc3, O2(O2r), V
   if (is_first_run_) {
-    trans_weights_to_compact(tweights_, weights);
+    setup_workspace([&]() {
+      trans_weights_to_compact(tweights_, weights);
+    });
   }
 
-#pragma omp parallel num_threads(mthr_)
+  THREAD_PARALLEL()
   {
-    int ithr = omp_get_thread_num();
+    int ithr = el_get_thread_num();
     if (this->input_fmt == nhwc) { // nhwc => nhwc
-      thread_parallel_for<6, 2>(mthr_, ithr, [&](int _ic4, int _t3, int _ic3,
-                                                 int _oc4, int _ht, int _wt) {
+      THREAD_FOR2(6, 2, mthr_, ithr, [&](int _ic4, int _t3, int _ic3,
+                                         int _oc4, int _ht, int _wt) {
         MD2(BiasType, abias, bias, this->oc4, this->oc3 * this->O2 * V);
         MD5(TweightsType, atweights, tweights_, this->oc4, this->ic4, this->oc3,
             this->ic3, V * V * this->kh * this->kw * this->I2 * this->O2);
@@ -127,8 +131,9 @@ void Instance_elx_conv_direct_t::__execute_b060(
             &md5(atweights, _oc4, _ic4, 0, _ic3, 0), &md2(abias, _oc4, 0),
             _ic4, _ic3, _oc4, _ht, _wt);
       }, this->ic4, this->t3, this->ic3, this->oc4, this->ht, this->wt);
-#pragma omp barrier
-      thread_parallel_for<4>(mthr_, ithr, [&](int _n, int _oh, int _ow, int _oc2) {
+
+      THREAD_BARRIER()
+      THREAD_FOR(4, mthr_, ithr, [&](int _n, int _oh, int _ow, int _oc2) {
         MD5(ToutputType, atoutput0, toutput_, this->ic4, this->n, this->oh,
             this->ow, this->oc);
         MD4(OutputType, aoutput0, output, this->n, this->oh, this->ow, this->oc);
@@ -141,8 +146,12 @@ void Instance_elx_conv_direct_t::__execute_b060(
                 this->oc2, V);
             out += *(__m<V> *)&md2(atoutput1, _oc2, 0);
           }
-          if (this->with_relu)
-            out = _mm<V>::max_ps(out, zero);
+          if (this->with_relu) {
+            auto lower = *(__m<V> *)(this->relu_bound_lower_vec);
+            auto upper = *(__m<V> *)(this->relu_bound_upper_vec);
+            out = _mm<V>::max_ps(out, lower);
+            out = _mm<V>::min_ps(out, upper);
+          }
           if (this->Or != V && _oc2 == this->oc2 - 1) {
             iter_each (_V, this->Or) {
               md2(aoutput1, _oc2, _V) = out[_V];
@@ -155,8 +164,8 @@ void Instance_elx_conv_direct_t::__execute_b060(
         }
       }, this->t3, this->oh, this->ow, this->oc2);
     } else { // blocked => blocked
-      thread_parallel_for<6, 2>(mthr_, ithr, [&](int _ic4, int _t3, int _ic3,
-                                                 int _oc4, int _ht, int _wt) {
+      THREAD_FOR2(6, 2, mthr_, ithr, [&](int _ic4, int _t3, int _ic3,
+                                         int _oc4, int _ht, int _wt) {
         MD2(BiasType, abias, bias, this->oc4, this->oc3 * this->O2 * V);
         MD5(TweightsType, atweights, tweights_, this->oc4, this->ic4, this->oc3,
             this->ic3, V * V * this->kh * this->kw * this->I2 * this->O2);
@@ -170,8 +179,8 @@ void Instance_elx_conv_direct_t::__execute_b060(
             &md5(atweights, _oc4, _ic4, 0, _ic3, 0), &md2(abias, _oc4, 0), _ic4,
             _ic3, _oc4, _ht, _wt);
       }, this->ic4, this->t3, this->ic3, this->oc4, this->ht, this->wt);
-#pragma omp barrier
-      thread_parallel_for<1>(mthr_, ithr, [&](int o) {
+      THREAD_BARRIER()
+      THREAD_FOR(1, mthr_, ithr, [&](int o) {
         MD3(ToutputType, atoutput, toutput_, this->ic4,
             this->n * this->oc2 * this->oh * this->ow, V);
         MD2(OutputType, aoutput, output,
@@ -182,8 +191,12 @@ void Instance_elx_conv_direct_t::__execute_b060(
           for (int _ic4 = 0; _ic4 < this->ic4; ++_ic4) {
             out += *(__m<V> *)&md3(atoutput, _ic4, o, 0);
           }
-          if (this->with_relu)
-            out = _mm<V>::max_ps(out, zero);
+          if (this->with_relu) {
+            auto lower = *(__m<V> *)(this->relu_bound_lower_vec);
+            auto upper = *(__m<V> *)(this->relu_bound_upper_vec);
+            out = _mm<V>::max_ps(out, lower);
+            out = _mm<V>::min_ps(out, upper);
+          }
           *(__m<V> *)&md2(aoutput, o, 0) = out;
         } else {
           el_error("Unsupported data type");
@@ -204,7 +217,9 @@ void Instance_elx_conv_direct_t::__execute_d060(
   // weights: oc4*, oc3, O2, ic4*, ic3, I2, V(Ir), V
   // output:  t3*, oc4*, oc3, O2(O2r), ht*wt*, T(Tr), V
   if (is_first_run_) {
-    trans_weights_to_compact(tweights_, weights);
+    setup_workspace([&]() {
+      trans_weights_to_compact(tweights_, weights);
+    });
   }
 
   if (this->input_fmt == nhwc) { // nhwc -> nhwc
@@ -251,8 +266,6 @@ Template_elx_conv_direct_t
 void Instance_elx_conv_direct_t::execute(
     void *output, void *input, void *weights, void *bias)
 {
-  set_trans_buffers();
-
   (this->*execute_opt_)((OutputType *)output,
       (InputType *)input, (WeightsType *)weights, (BiasType *)bias);
 }

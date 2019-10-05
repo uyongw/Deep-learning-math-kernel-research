@@ -4,6 +4,7 @@
 #include "euler.hpp"
 #include "el_def.hpp"
 #include "el_utils.hpp"
+#include "el_allocator.hpp"
 #include "elx_conv.hpp"
 #include "elx_conv_wino_gemm.hpp"
 #include "elx_conv_wino_trans_input.hpp"
@@ -88,7 +89,8 @@ private:
   void __execute_a07b(OutputType *output, InputType *input,
       WeightsType *weights, BiasType *bias);
 
-  void set_trans_buffers();
+  void set_scratch_buffers(void *base);
+  void set_workspace_buffers(void *base);
   int prepare_execute_opt();
   void bind_execute_functions();
 
@@ -123,8 +125,6 @@ private:
   size_t binput_size_;
   size_t bweights_size_;
   size_t boutput_size_;
-  void *workspace_;
-  void *scratch_;
 
   TweightsType *tweights_;
   TinputType *tinput_;

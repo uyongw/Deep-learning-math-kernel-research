@@ -6,13 +6,48 @@ project(Euler CXX C)
 
 option(WITH_TEST "Build with test cases" ON)
 option(WITH_VNNI "With CLX VNNI support" OFF)
-option(ENABLE_USER_FP16 "user fp16 type support" OFF)
+option(ENABLE_USER_FP16 "User FP16 type support" OFF)
+
+if (NOT DEFINED MT_RUNTIME)
+  set(MT_RUNTIME "omp")
+endif()
+STRING(TOLOWER "${MT_RUNTIME}" MT_RUNTIME)
+
+# Build Euler version string
+find_package (Git)
+if (${GIT_FOUND})
+  # Get current branch
+  execute_process(
+    COMMAND ${GIT_EXECUTABLE} rev-parse --abbrev-ref HEAD
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    RESULT_VARIABLE retval
+    OUTPUT_VARIABLE GIT_BRANCH
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if (${retval})
+    set(GIT_BRANCH "not-a-git-repo-branch")
+  endif ()
+
+  # Get current commit hash
+  execute_process(
+    COMMAND ${GIT_EXECUTABLE} log -1 --format=%h
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    RESULT_VARIABLE retval
+    OUTPUT_VARIABLE GIT_COMMIT_HASH
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if (${retval})
+    set(GIT_COMMIT_HASH "not-a-git-repo-hash")
+  endif ()
+else()
+  set(GIT_BRANCH "no-git-found-branch")
+  set(GIT_COMMIT_HASH "no-git-found-hash")
+endif()
 
 set(EULER_VERSION_MAJOR 0)
 set(EULER_VERSION_MINOR 0)
 set(EULER_VERSION_PATCH 1)
 set(EULER_VERSION
-  "${EULER_VERSION_MAJOR}.${EULER_VERSION_MINOR}.${EULER_VERSION_PATCH}")
+  "v${EULER_VERSION_MAJOR}.${EULER_VERSION_MINOR}.${EULER_VERSION_PATCH}+${GIT_BRANCH}.${GIT_COMMIT_HASH}")
+message("-- Euler version: " ${EULER_VERSION})
 
 cmake_policy(SET CMP0015 NEW)
 cmake_policy(SET CMP0042 NEW)
@@ -80,7 +115,8 @@ file (GLOB __euler_source
   src/elx_conv_direct_depthwise_lp_xopt.cpp
   src/elx_conv_direct_depthwise_lp_bind.cpp
   src/elx_stream.cpp
-  src/elx_reorder.cpp)
+  src/elx_reorder.cpp
+  src/el_init.cpp)
 
 set(KGEMM_GEN_DIR ${CMAKE_BINARY_DIR}/kgen)
 set(BUILD_KGEMM_GEN_CMD ${KGEMM_GEN_DIR}/kgemm_gen.sh)
@@ -144,7 +180,11 @@ link_directories(lib)
 # build lib
 add_library(${lib_name} SHARED ${__euler_source} ${__euler_gemm_kernel_source})
 set_target_properties(${lib_name} PROPERTIES CXX_VISIBILITY_PRESET hidden)
-target_link_libraries(${lib_name} PUBLIC iomp5)
+if (MT_RUNTIME STREQUAL "tbb")
+  target_link_libraries(${lib_name} PUBLIC tbb)
+elseif (MT_RUNTIME STREQUAL "omp")
+  target_link_libraries(${lib_name} PUBLIC iomp5)
+endif()
 target_link_libraries(${lib_name} PUBLIC rt)
 
 if (WITH_TEST)

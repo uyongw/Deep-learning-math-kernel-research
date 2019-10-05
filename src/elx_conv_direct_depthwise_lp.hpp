@@ -4,6 +4,7 @@
 #include "euler.hpp"
 #include "el_def.hpp"
 #include "el_utils.hpp"
+#include "el_allocator.hpp"
 #include "elx_conv.hpp"
 #include "kernel/elk_u8s8_depthwise_conv_otj_binder.hxx"
 
@@ -45,7 +46,8 @@ Template_elx_conv_direct_depthwise_lp_t class elx_conv_direct_depthwise_lp_t : p
       int8_t *tweights, BiasType *bias, TscaleType *src_scale,
       TscaleType *weights_scale, TscaleType *weights_factor, int _ht, int _wt);
 
-  void set_trans_buffers();
+  void set_scratch_buffers(void *base);
+  void set_workspace_buffers(void *base);
   int prepare_execute_opt();
   void bind_execute_functions();
   void prepare_quant_calibration(eld_conv_t &);
@@ -60,7 +62,6 @@ Template_elx_conv_direct_depthwise_lp_t class elx_conv_direct_depthwise_lp_t : p
   bool is_first_run_;
   bool inference_acc_;
 
-  int G, g2; // aligned-up g, blocked g
   size_t tweights_size_;
   TweightsType *tweights_;
   size_t tweights_s8_size_;
@@ -76,8 +77,6 @@ Template_elx_conv_direct_depthwise_lp_t class elx_conv_direct_depthwise_lp_t : p
   unsigned int xopt_;
   int attr_;
   int mthr_;
-  void *scratch_;
-  void *workspace_;
 };
 
 template class elx_conv_direct_depthwise_lp_t<conv::U8F32U8F32, conv_impl::INT8_F32, 16, ISA_SKX_AVX512>;

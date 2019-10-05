@@ -23,11 +23,25 @@ void Instance_elx_conv_direct_lp_t::__execute_a160(
   // weights: oc4*, oc3, O2, ic4*, ic3, I2, kh, kw, V(V1, Vx), V
   // output (blocked):  t3*, oc4*, oc3, O2, ht*wt*, T(Tr), V
   if (is_first_run_) {
-    trans_weights(weights, bias);
+    setup_workspace([&]() {
+      trans_weights(weights_scale_, weights_factor_, tweights_s8_,
+                    weights, bias);
+    });
   }
 
   auto V1 = compact_ir_weights_ ? this->Ir : this->V1;
-  parallel_for<5, 1>(mthr_, [&](int _t3, int _ic4, int _oc4, int _ht, int _wt) {
+
+  INIT_LOOP_ORDER(5);
+  CREATE_LOOP_ORDER(5, t3, ic4, oc4, ht, wt);
+  CREATE_LOOP_ORDER(5, ic4, oc4, t3, ht, wt);
+
+  auto loop_for = [&](int a0, int a1, int a2, int a3, int a4) {
+    int _t3, _ic4, _oc4, _ht, _wt;
+    if (CHECK_LOOP_ORDER(5, t3, ic4, oc4, ht, wt)) {
+      _t3 = a0, _ic4 = a1, _oc4 = a2, _ht = a3, _wt = a4;
+    } else {
+      _ic4 = a0, _oc4 = a1, _t3 = a2, _ht = a3, _wt = a4;
+    }
     MD3(int8_t, atweights_s8, tweights_s8_, this->oc4, this->ic4, V1 * Vx * V
         * this->kh * this->kw * this->ic3 * this->oc3 * this->I2 * this->O2);
     MD2(BiasType, abias, bias, this->oc4, this->oc3 * this->O2 * V);
@@ -79,7 +93,17 @@ void Instance_elx_conv_direct_lp_t::__execute_a160(
               &md3(atweights_s8, _oc4, _ic4, 0),
               &md2(abias, _oc4, 0), input_scale_, &md2(atweights_scale, _oc4, 0),
               &md2(aweights_factor, _oc4, 0), _ic4, _oc4, _ht, _wt);
-  }, this->t3, this->ic4, this->oc4, this->ht, this->wt);
+  };
+
+  if (this->oh <= 7 && this->ow <= 7) {
+    SET_LOOP_ORDER(5, ic4, oc4, t3, ht, wt);
+    parallel_for<5, 0>(mthr_, loop_for,
+                       this->ic4, this->oc4, this->t3, this->ht, this->wt);
+  } else {
+    SET_LOOP_ORDER(5, t3, ic4, oc4, ht, wt);
+    parallel_for<5, 1>(mthr_, loop_for,
+                       this->t3, this->ic4, this->oc4, this->ht, this->wt);
+  }
 
   if (inference_acc_)
     is_first_run_ = false;
@@ -93,7 +117,10 @@ void Instance_elx_conv_direct_lp_t::__execute_d160(
   // weights: oc4*, oc3, O2, ic4*, ic3, I2, kh, kw, V(V1, Vx), V
   // output (blocked):  t3*, oc4*, oc3, O2, ht*wt*, T(Tr), V
   if (is_first_run_) {
-    trans_weights(weights, bias);
+    setup_workspace([&]() {
+      trans_weights(weights_scale_, weights_factor_, tweights_s8_,
+                    weights, bias);
+    });
   }
 
   parallel_for<5, 1>(mthr_, [&](int _t3, int _ic4, int _oc4, int _ht, int _wt) {
@@ -141,6 +168,7 @@ void Instance_elx_conv_direct_lp_t::__execute_d160(
                 &md2(aweights_factor, _oc4, 0), _ic4, _oc4, _ht, _wt);
   }, this->t3, this->ic4, this->oc4, this->ht, this->wt);
 
+  int oc2 = this->Or ? this->oc2 - 1 : this->oc2;
   if (this->with_argmax) {
     parallel_for<3>(mthr_, [&](int _n, int _oh, int _ow) {
       constexpr int V8 = 8;
@@ -156,7 +184,7 @@ void Instance_elx_conv_direct_lp_t::__execute_d160(
       __m<V/2> vmax = _mm256_load_ps(aout);
       __i<V/2> kmax = _mm256_setzero_si256();
 
-      iter_each(_oc2, this->oc2) {
+      iter_each(_oc2, oc2) {
         iter_each(_V2, 2) {
           int index = _oc2 * 2 + _V2;
           assert(index < (1 << 15));
@@ -184,6 +212,21 @@ void Instance_elx_conv_direct_lp_t::__execute_d160(
         }
       }
       md3(aoutput, _n, _oh, _ow) = kmaxbuf[pos] * V8 + pos;
+
+      int tail_start = oc2 * V;
+      for (int _V = 0; _V < this->Or; ++_V) {
+        MD5(float, atoutput_blocked, toutput_,
+            this->n, this->oc2, this->oh, this->ow, V);
+        MD5(float, atoutput_nhwc, toutput_,
+            this->n, this->oh, this->ow, this->oc2, V);
+        float aout = (this->input_fmt == nhwc)
+          ? md5(atoutput_nhwc, _n, _oh, _ow, this->oc2 - 1, _V)
+          : md5(atoutput_blocked, _n, this->oc2 - 1, _oh, _ow, _V);
+        if (aout > gmax) {
+          gmax = aout;
+          md3(aoutput, _n, _oh, _ow) = tail_start + _V;
+        }
+      }
     }, this->n, this->oh, this->ow);
   }
 
@@ -195,8 +238,6 @@ Template_elx_conv_direct_lp_t
 void Instance_elx_conv_direct_lp_t::execute(
     void *output, void *input, void *weights, void *bias)
 {
-  set_scratchpad_buffers();
-
   (this->*execute_opt_)((OutputType *)output,
       (InputType *)input, (WeightsType *)weights, (BiasType *)bias);
 }

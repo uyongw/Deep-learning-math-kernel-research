@@ -6,11 +6,8 @@
 #include "el_def.hpp"
 #include "el_utils.hpp"
 #include "elx_conv.hpp"
-#if __ICC_COMPILER
-#include "xmmintrin.h"
-#include "pmmintrin.h"
-#endif
 #include "elx_stream.hpp"
+#include "el_init.hpp"
 
 namespace euler {
 
@@ -50,6 +47,14 @@ elx_conv_t::elx_conv_t(eld_conv_t &dc)
   this->with_argmax = dc.with_argmax;
   this->f16c_opt = dc.f16c_opt;
   this->use_scratch_pad = dc.use_scratch_pad;
+  this->relu_bound_lower = dc.relu_bound.lower;
+  this->relu_bound_upper = dc.relu_bound.upper;
+
+  // redundant
+  for (auto i = 0; i < estl::size(this->relu_bound_lower_vec); ++i)
+    this->relu_bound_lower_vec[i] = this->relu_bound_lower;
+  for (auto i = 0; i < estl::size(this->relu_bound_upper_vec); ++i)
+    this->relu_bound_upper_vec[i] = this->relu_bound_upper;
 
   this->scratch_pad = dc.scratch_pad;
 
@@ -72,6 +77,7 @@ elx_conv_t::elx_conv_t(eld_conv_t &dc)
 
   this->ic4 = dc.partition.i;
   this->oc4 = dc.partition.o;
+  this->g3 = dc.partition.g;
 
   this->streaming_input = dc.streaming_hint.input;
   this->streaming_output = dc.streaming_hint.output;
@@ -85,6 +91,8 @@ elx_conv_t::elx_conv_t(eld_conv_t &dc)
   this->output_quant_S = dc.output_quant.scale;
   this->output_quant_z = dc.output_quant.z;
   this->sum_quant_S = dc.sum_quant.scale;
+  for (auto i = 0; i < estl::size(this->sum_quant_S_vec); ++i)
+    this->sum_quant_S_vec[i] = this->sum_quant_S;
   this->sum_quant_z = dc.sum_quant.z;
   this->sampling_kind = dc.sampling_kind;
 
@@ -95,36 +103,78 @@ elx_conv_t::elx_conv_t(eld_conv_t &dc)
   this->bias_ptr = nullptr;
   this->eager_mode = dc.eager_mode;
   this->stream_sync = dc.stream_sync;
-
-  this->verbose = false;
-  auto env_verbose = getenv("EULER_VERBOSE");
-  if (env_verbose != nullptr && env_verbose[0] == '1')
-    this->verbose = true;
-  
+  this->name = dc.name;
+ 
   auto env_numa_node = getenv("EULER_NUMA_NODE");
   auto env_shared_workspace = getenv("EULER_SHARED_WORKSPACE");
-  if (env_shared_workspace != nullptr && env_shared_workspace[0] == '1') {
-    this->shared_workspace_enabled = true;
-    this->shared_workspace_key = ".euler_key_" + dc.shared_workspace_key;
-    if (env_numa_node != nullptr)
-      this->shared_workspace_key = this->shared_workspace_key
-        + "_" + env_numa_node;
-      std::replace(this->shared_workspace_key.begin(),
-                   this->shared_workspace_key.end(), '/', '_');
-  } else {
-    this->shared_workspace_enabled = false;
-    this->shared_workspace_key = dc.shared_workspace_key;
+  this->shared_workspace_enabled = false;
+  this->shared_workspace_key = "na";
+  if (env_shared_workspace != nullptr
+      && (env_shared_workspace[0] == '1' || env_shared_workspace[0] == '2')) {
+    if (env_numa_node != nullptr) {
+      this->shared_workspace_enabled = true;
+      this->shared_workspace_key = std::string(".euler_key_") + env_numa_node;
+    }
   }
-  this->shared_workspace_mgr = nullptr;
 
-  // TODO: move it to euler cpu global init
-#if __ICC_COMPILER
-  _MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON);
-  _MM_SET_DENORMALS_ZERO_MODE(_MM_DENORMALS_ZERO_ON);
-#endif
+  scratch_size_ = 0;
+  workspace_size_ = 0;
+  workspace_ = nullptr;
+  has_scratch_ = false;
+  on_destroy_ = false;
 }
 
-void elx_conv_t::set_data(void *output, void *input, void *weights, void *bias)
+void elx_conv_t::set_workspace_buffers() {
+  if (workspace_size_ != 0 && workspace_ == nullptr) {
+    if (this->shared_workspace_enabled) {
+      const char *key = this->shared_workspace_key.c_str();
+      workspace_ = shwalloc::acquire(workspace_size_, key);
+    } else {
+      workspace_ = walloc::acquire(workspace_size_);
+    }
+  }
+  if (workspace_ != nullptr)
+    set_workspace_buffers(workspace_);
+}
+
+void elx_conv_t::set_scratch_buffers() {
+  void *scratch = nullptr;
+  if (scratch_size_ != 0 && !has_scratch_) {
+    scratch = galloc::acquire(scratch_size_);
+    has_scratch_ = true;
+  }
+  if (scratch != nullptr)
+    set_scratch_buffers(galloc::get());
+}
+
+void elx_conv_t::teardown() {
+  if (workspace_ != nullptr && !this->shared_workspace_enabled) {
+    walloc::release(workspace_);
+    workspace_ = nullptr;
+  } else {
+    const char *key = this->shared_workspace_key.c_str();
+    shwalloc::release(workspace_, key);
+    workspace_ = nullptr;
+  }
+
+  if (scratch_size_ > 0 && has_scratch_)
+    galloc::release();
+}
+
+elx_conv_t::~elx_conv_t() {
+  if (eager_mode) {
+    teardown();
+  } else {
+    // submit an end-of-life request
+    this->stream_sync = true;
+    on_destroy_ = true;
+    global_stream.submit(this);
+    global_stream.wait(this);
+  }
+}
+
+void elx_conv_t::set_user_buffers(
+    void *output, void *input, void *weights, void *bias)
 {
   output_ptr = output;
   input_ptr = input;
@@ -132,8 +182,8 @@ void elx_conv_t::set_data(void *output, void *input, void *weights, void *bias)
   bias_ptr = bias;
 }
 
-void elx_conv_t::timed_execute(void *output, void *input, void *weights, void *bias)
-{
+void elx_conv_t::execute_verbose(void *output, void *input, void *weights,
+                                 void *bias) {
   typedef std::chrono::high_resolution_clock hrc;
   typedef std::chrono::duration<float, std::milli> hrc_duration;
 
@@ -144,8 +194,7 @@ void elx_conv_t::timed_execute(void *output, void *input, void *weights, void *b
 
   printf("euler_verbose,%s,ih:%d;oh:%d;ic:%d;oc:%d,"\
          "%s;%x,src:%s;wei:%s;dst:%s,src:%s;wei:%s;dst:%s;b:%s, %lf\n",
-      this->shared_workspace_key.c_str(),
-      this->ih, this->oh, this->ic, this->oc,
+      this->name.c_str(), this->ih, this->oh, this->ic, this->oc,
       algorithm_to_string(this->algorithm), this->execution_mode,
       format_to_string(this->input_fmt), format_to_string(this->weights_fmt),
       format_to_string(this->output_fmt),
@@ -167,13 +216,15 @@ int elx_conv(eld_conv_t &desc, void *output, void *input, void *weights, void *b
     return ELX_GENERAL_ERROR;
   }
 
+  xc->set_scratch_buffers();
+
   if (xc->eager_mode) {
-    if (xc->verbose)
-      xc->timed_execute(output, input, weights, bias);
+    if (ego.verbose)
+      xc->execute_verbose(output, input, weights, bias);
     else
       xc->execute(output, input, weights, bias);
   } else {
-    xc->set_data(output, input, weights, bias);
+    xc->set_user_buffers(output, input, weights, bias);
     global_stream.submit(xc);
     if (xc->stream_sync)
       global_stream.wait(xc);

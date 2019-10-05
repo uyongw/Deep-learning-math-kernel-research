@@ -144,6 +144,7 @@ struct EULER_API eld_conv_t {
   bool disable_autoparam;
   bool eager_mode;
   bool stream_sync;
+  struct { float lower = 0, upper = FLT_MAX; } relu_bound;
 
   // Performance:
   // Number of thread teams, number of threads per team
@@ -153,7 +154,7 @@ struct EULER_API eld_conv_t {
   // Flatting/Blocking/Partition
   struct { int o, t; } flatting;
   struct { int i, o; } blocking;
-  struct { int i, o; } partition;
+  struct { int i, o, g; } partition;
   // Streaming hint: STORE_DEFAULT | STORE_NORMAL | STORE_STREAMING
   struct { int input, output; } streaming_hint;
   // Use blocked format internally for plain format
@@ -165,7 +166,7 @@ struct EULER_API eld_conv_t {
   sampling_kind_t sampling_kind;
 
   void *scratch_pad;
-  std::string shared_workspace_key;
+  std::string name;
 
   // Defaults
   eld_conv_t();

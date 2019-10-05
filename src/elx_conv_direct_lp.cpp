@@ -13,7 +13,7 @@ Instance_elx_conv_direct_lp_t::elx_conv_direct_lp_t(eld_conv_t &dc)
     : elx_conv_t(dc)
 {
   xopt_ = this->execution_mode;
-  mthr_ = omp_get_max_threads();
+  mthr_ = el_get_max_threads();
 
   this->Vx = 4;
   this->V1 = V / this->Vx;
@@ -144,8 +144,6 @@ int Instance_elx_conv_direct_lp_t::prepare_execute_opt()
   weights_scale_size_ = 0;
   weights_factor_size_ = 0;
   toutput_ = nullptr;
-  scratch_ = nullptr;
-  workspace_ = nullptr;
   tweights_s8_ = nullptr;
   input_scale_ = nullptr;
   weights_scale_ = nullptr;
@@ -176,28 +174,16 @@ int Instance_elx_conv_direct_lp_t::prepare_execute_opt()
 
   workspace_size_ = tweights_s8_size_ + weights_scale_size_
       + weights_factor_size_ + input_scale_size_;
-  size_t scratchpad_size = toutput_size_;
+  scratch_size_ = toutput_size_;
 
-  // TODO: user provided buffer
-  workspace_ = nullptr;
-  if (scratchpad_size != 0) {
-    scratch_ = galloc::acquire(scratchpad_size);
-  }
-
-  printf("nthreads=%d, mthr_=%d\n", this->nthreads, mthr_);
-  printf("sampling_kind = %d\n", this->sampling_kind);
-  printf("input_quant_S = %f\n", this->input_quant_S);
-  printf("input_quant_z = %f\n", this->input_quant_z);
-  printf("output_quant_S = %f\n", this->output_quant_S);
-  printf("output_quant_z = %f\n", this->output_quant_z);
   return 0;
 }
 
 Template_elx_conv_direct_lp_t
-void Instance_elx_conv_direct_lp_t::set_workspace_buffers()
+void Instance_elx_conv_direct_lp_t::set_workspace_buffers(void *base)
 {
-  if (workspace_ != nullptr) {
-    weights_scale_ = (TscaleType *)workspace_;
+  if (base != nullptr) {
+    weights_scale_ = (TscaleType *)base;
     weights_factor_ = (TscaleType *)((char *)weights_scale_ + weights_scale_size_);
     input_scale_ = (TscaleType *)((char *)weights_factor_ + weights_factor_size_);
     tweights_s8_ = (int8_t *)((char *)input_scale_ + input_scale_size_);
@@ -205,9 +191,10 @@ void Instance_elx_conv_direct_lp_t::set_workspace_buffers()
 }
 
 Template_elx_conv_direct_lp_t
-void Instance_elx_conv_direct_lp_t::set_scratchpad_buffers()
+void Instance_elx_conv_direct_lp_t::set_scratch_buffers(void *base)
 {
-  toutput_ = (ToutputType *)galloc::get();
+  if (base != nullptr)
+    toutput_ = (ToutputType *)base;
 }
 
 Template_elx_conv_direct_lp_t
@@ -227,18 +214,6 @@ void Instance_elx_conv_direct_lp_t::prepare_quant_calibration(eld_conv_t &dc)
 Template_elx_conv_direct_lp_t
 Instance_elx_conv_direct_lp_t::~elx_conv_direct_lp_t()
 {
-  if (workspace_ != nullptr && !this->shared_workspace_enabled) {
-    ::free(workspace_);
-    workspace_ = nullptr;
-  } else {
-    if (this->shared_workspace_mgr != nullptr) {
-      delete this->shared_workspace_mgr;
-      this->shared_workspace_mgr = nullptr;
-    }
-    workspace_ = nullptr;
-  }
-
-  galloc::release();
 }
 
 Template_elx_conv_direct_lp_t void
@@ -442,9 +417,8 @@ Instance_elx_conv_direct_lp_t::__trans_weights_acc(TscaleType *weights_scale,
 // weights (blocked): oc2, ic2, kh, kw, V, V
 // tweights: oc4, ic4, oc3, _ic3, kh, kw, O1, I2, V1, O, V, Vx
 Template_elx_conv_direct_lp_t void Instance_elx_conv_direct_lp_t::
-__trans_weights(TscaleType *weights_scale, TscaleType *weights_factor,
+trans_weights(TscaleType *weights_scale, TscaleType *weights_factor,
                 int8_t *tweights_s8, WeightsType *weights, BiasType *bias) {
-  _MM_SET_ROUNDING_MODE(_MM_ROUND_NEAREST);
   __m<V> mmscale = _mm<V>::set1_ps(INT8GEMM_TWT_QTSCALE);
 
   auto Vr = this->ic % V ? this->ic % V : V;
@@ -517,31 +491,6 @@ __trans_weights(TscaleType *weights_scale, TscaleType *weights_factor,
   __trans_weights_acc(weights_scale, weights_factor, tweights_s8, bias);
 }
 
-Template_elx_conv_direct_lp_t void Instance_elx_conv_direct_lp_t::
-trans_weights(WeightsType *weights, BiasType *bias) {
-  if (inference_acc_ && this->shared_workspace_enabled) {
-    const char *key = this->shared_workspace_key.c_str();
-    process_singleton_t process_singleton(key);
-    {
-      this->shared_workspace_mgr =
-        new shared_workspace_mgr_t(this->workspace_size_, key);
-      workspace_ = this->shared_workspace_mgr->get();
-      set_workspace_buffers();
-      if (!this->shared_workspace_mgr->is_setup_done()) {
-        __trans_weights(weights_scale_, weights_factor_, tweights_s8_,
-                        weights, bias);
-        this->shared_workspace_mgr->set_setup_done();
-      }
-    }
-  } else {
-    MEMALIGN64(&workspace_, workspace_size_);
-    set_workspace_buffers();
-    __trans_weights(weights_scale_, weights_factor_, tweights_s8_,
-                    weights, bias);
-
-  }
-}
-
 Template_elx_conv_direct_lp_t
 void Instance_elx_conv_direct_lp_t::conv_a160(OutputType *output,
     ToutputType *toutput, InputType *input_u8, int8_t *weights_s8,
@@ -555,12 +504,12 @@ void Instance_elx_conv_direct_lp_t::conv_a160(OutputType *output,
   int khs = estl::max(0, this->tp - this->hs * _ht);
   int khe = estl::min(this->kh, this->ih + this->tp - this->hs * _ht);
   int kws = _wt == 0 ? this->lp : 0;
-  int kwe = _wt == this->wt - 1 ? this->kw - this->lp : this->kw;
+  int kwe = _wt == this->wt - 1 ? this->kw - this->rp : this->kw;
 
   auto _ih = _ht * this->hs + (this->kh / 2) - this->tp;
   auto _iw = _wt * this->T * this->ws + (this->kw / 2) - this->lp;
-  int pad_l = (_wt == 0) && (this->lp > 0);
-  int pad_r = (_wt == this->wt - 1) && (this->lp > 0);
+  int pad_l = _wt == 0 ? this->lp : 0;
+  int pad_r = _wt == this->wt - 1 ? this->rp : 0;
 
   int _wacc_wt =
       (_wt == 0 || wacc_wt_ == 1) ? 0 : _wt == this->wt - 1 ? wacc_wt_ - 1 : 1;
@@ -696,9 +645,8 @@ void Instance_elx_conv_direct_lp_t::gemm_d160(OutputType *output,
       }
     }
 
+    __mmask16 k = _cvtu32_mask16((1 << this->Or) - 1);
     if (_ic4 == this->ic4 - 1 && _ic3 == this->ic3 - 1) {
-      __m<V> out_repS = _mm<V>::set1_ps(this->output_quant_repS);
-      __m<V> out_z = _mm<V>::set1_ps(this->output_quant_z);
       iter_each (_O2, this->O2) {
       iter_each (_T, Tz) {
         MD4(ToutputType, atoutput1_nhwc, &md3(atoutput0_nhwc, _ht, ows0 + _T, 0),
@@ -719,8 +667,12 @@ void Instance_elx_conv_direct_lp_t::gemm_d160(OutputType *output,
           auto factor = *(__m<V> *)&md3(aweights_factor, _oc3, _O2, 0);
           tout = tout * scale + factor;
           // fuse relu
-          if (this->with_relu)
-            tout = _mm<V>::max_ps(tout, _mm<V>::setzero_ps());
+          if (this->with_relu) {
+            auto lower = *(__m<V> *)(this->relu_bound_lower_vec);
+            auto upper = *(__m<V> *)(this->relu_bound_upper_vec);
+            tout = _mm<V>::max_ps(tout, lower);
+            tout = _mm<V>::min_ps(tout, upper);
+          }
 
           if (std::is_same<OutputType, int8_t>::value ||
               std::is_same<OutputType, uint8_t>::value) {
@@ -737,8 +689,16 @@ void Instance_elx_conv_direct_lp_t::gemm_d160(OutputType *output,
           } else if (std::is_same<OutputType, float>::value) {
             if (this->with_argmax)
               _mm<V>::store_ps(atout, tout);
-            else
-              _mm<V>::store_ps(aout, tout);
+            else {
+              bool last_oc = (_oc4 == this->oc4 - 1
+                              && _oc3 == this->oc3 - 1
+                              && _O2 == this->O2 - 1);
+              if (last_oc) {
+                _mm<V>::mask_store_ps(aout, k, tout);
+              } else {
+                _mm<V>::store_ps(aout, tout);
+              }
+            }
           } else {
             el_error("direct: d160: unimplemented");
           }

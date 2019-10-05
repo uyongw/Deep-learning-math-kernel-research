@@ -12,7 +12,7 @@ Instance_elx_conv_direct_t::elx_conv_direct_t(eld_conv_t &dc)
 {
   // user input
   xopt_ = this->execution_mode;
-  mthr_ = omp_get_max_threads();
+  mthr_ = el_get_max_threads();
 
   this->vmg = 1;
   this->Vx = 1;
@@ -150,8 +150,6 @@ int Instance_elx_conv_direct_t::prepare_execute_opt()
   tweights_size_ = 0;
   tweights_ = nullptr;
   toutput_ = nullptr;
-  scratch_ = nullptr;
-  workspace_ = nullptr;
 
   switch (xopt_) {
   case 0xb060:
@@ -169,34 +167,28 @@ int Instance_elx_conv_direct_t::prepare_execute_opt()
 #define WEIGHTS_MAX_PRELOAD 4
   if (tweights_size_ > 0)
     tweights_size_ += WEIGHTS_MAX_PRELOAD * V;
-
-  size_t workspace_size = tweights_size_;
-  // TODO: user provided buffer
-  if (workspace_size != 0) {
-    MEMALIGN64(&workspace_, workspace_size);
-    tweights_ = (TweightsType *)workspace_;
-  }
-  size_t scratchpad_size = toutput_size_;
-  if (scratchpad_size != 0) {
-    scratch_ = galloc::acquire(scratchpad_size);
-  }
+  scratch_size_ = toutput_size_;
 
   return 0;
 }
 
 Template_elx_conv_direct_t
-void Instance_elx_conv_direct_t::set_trans_buffers()
+void Instance_elx_conv_direct_t::set_workspace_buffers(void *base)
 {
-  toutput_ = (ToutputType*)galloc::get();
+  if (base != nullptr)
+    tweights_ = (TweightsType *)base;
+}
+
+Template_elx_conv_direct_t
+void Instance_elx_conv_direct_t::set_scratch_buffers(void *base)
+{
+  if (base != nullptr)
+    toutput_ = (ToutputType *)base;
 }
 
 Template_elx_conv_direct_t
 Instance_elx_conv_direct_t::~elx_conv_direct_t()
 {
-  if (workspace_ != nullptr)
-    ::free(workspace_);
-
-  galloc::release();
 }
 
 Template_elx_conv_direct_t
@@ -367,13 +359,13 @@ Instance_elx_conv_direct_t::conv_a060(OutputType *output,
   int khs = estl::max(0, this->tp - this->hs * _ht);
   int khe = estl::min(this->kh, this->ih + this->tp - this->hs * _ht);
   int kws = _wt == 0 ? this->lp : 0;
-  int kwe = _wt == this->wt - 1 ? this->kw - this->lp : this->kw;
+  int kwe = _wt == this->wt - 1 ? this->kw - this->rp : this->kw;
   assert(this->T > this->lp && this->Tr > this->rp);
 
   auto _ih = _ht * this->hs + (this->kh / 2) - this->tp;
   auto _iw = _wt * this->T * this->ws + (this->kw / 2) - this->lp;
-  int pad_l = (_wt == 0) && (this->lp > 0);
-  int pad_r = (_wt == this->wt - 1) && (this->lp > 0);
+  int pad_l = _wt == 0 ? this->lp : 0;
+  int pad_r = _wt == this->wt - 1 ? this->rp : 0;
 
   if (this->input_fmt == nhwc) {
     MD4(InputType, ainput0, input, this->ih, this->iw, this->g, this->ic);
@@ -444,13 +436,13 @@ Instance_elx_conv_direct_t::conv_b060(OutputType *output,
   int khs = estl::max(0, this->tp - this->hs * _ht);
   int khe = estl::min(this->kh, this->ih + this->tp - this->hs * _ht);
   int kws = _wt == 0 ? this->lp : 0;
-  int kwe = _wt == this->wt - 1 ? this->kw - this->lp : this->kw;
+  int kwe = _wt == this->wt - 1 ? this->kw - this->rp : this->kw;
   assert(this->T > this->lp && this->Tr > this->rp);
 
   auto _ih = _ht * this->hs + (this->kh / 2) - this->tp;
   auto _iw = _wt * this->T * this->ws + (this->kw / 2) - this->lp;
-  int pad_l = (_wt == 0) && (this->lp > 0);
-  int pad_r = (_wt == this->wt - 1) && (this->lp > 0);
+  int pad_l = _wt == 0 ? this->lp : 0;
+  int pad_r = _wt == this->wt - 1 ? this->rp : 0;
 
   MD2(OutputType, aoutput_nhwc, output, this->oc3, this->O2 * V);
   MD2(OutputType, aoutput_blocked, output, this->oc3, this->O2 * this->ht * this->ow * V);
@@ -557,8 +549,11 @@ void Instance_elx_conv_direct_t::gemm_d060(OutputType *output, InputType *input,
               iter_each (_T, Tz) {
                 MD4(OutputType, aoutput1, &md4(aoutput0, _ht, ows0 + _T, 0, 0),
                     this->oc4, this->oc3, this->O2, V);
-                auto s = _mm<V>::max_ps(*(__m<V> *)&md4(aoutput1, 0, _oc3, _O2, 0),
-                                        _mm<V>::setzero_ps());
+                auto s = *(__m<V> *)&md4(aoutput1, 0, _oc3, _O2, 0);
+                auto lower = *(__m<V> *)(this->relu_bound_lower_vec);
+                auto upper = *(__m<V> *)(this->relu_bound_upper_vec);
+                s = _mm<V>::max_ps(s, lower);
+                s = _mm<V>::min_ps(s, upper);
                 _mm512_mask_store_ps(&md4(aoutput1, 0, _oc3, _O2, 0), k, s);
               }
             } else el_error("direct: d060: unimplemented");
@@ -603,9 +598,11 @@ void Instance_elx_conv_direct_t::gemm_d060(OutputType *output, InputType *input,
           iter_each (_O2, this->O2) {
           iter_each (_T, Tz) {
             if (I == ISA_SKX_AVX512 && std::is_same<OutputType, float>::value) {
-              auto s = _mm<V>::max_ps(
-                  *(__m<V> *)&md5(aoutput, _oc3, _O2, _ht, ows0 + _T, 0),
-                  _mm<V>::setzero_ps());
+              auto s = *(__m<V> *)&md5(aoutput, _oc3, _O2, _ht, ows0 + _T, 0);
+              auto lower = *(__m<V> *)(this->relu_bound_lower_vec);
+              auto upper = *(__m<V> *)(this->relu_bound_upper_vec);
+              s = _mm<V>::max_ps(s, lower);
+              s = _mm<V>::min_ps(s, upper);
               _mm<V>::store_ps(&md5(aoutput, _oc3, _O2, _ht, ows0 + _T, 0), s);
             } else
               el_error("direct: d060: unimplemented");

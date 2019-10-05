@@ -225,7 +225,7 @@ struct u8s8_gemm_kernel_otj<GarrayTypes, OoutputType, V, Vx, ISA_SKX_AVX512,
     if (ip_sum) {
       if (std::is_same<OoutputType, uint8_t>::value
           || std::is_same<OoutputType, int8_t>::value) {
-        __m<V> sum_S = _mm<V>::set1_ps(xc.sum_quant_S);
+        __m<V> sum_S = *(__m<V> *)(xc.sum_quant_S_vec);
         __m128i &mmoo = *(__m128i *)aoout;
         __i<V> mmoos32;
         if (std::is_same<OoutputType, int8_t>::value)
@@ -242,7 +242,10 @@ struct u8s8_gemm_kernel_otj<GarrayTypes, OoutputType, V, Vx, ISA_SKX_AVX512,
 
     // fuse relu
     if (get_attr(attr, relu_idx)) {
-      fout = _mm<V>::max_ps(fout, _mm<V>::setzero_ps());
+      auto lower = *(__m<V> *)(xc.relu_bound_lower_vec);
+      auto upper = *(__m<V> *)(xc.relu_bound_upper_vec);
+      fout = _mm<V>::max_ps(fout, lower);
+      fout = _mm<V>::min_ps(fout, upper);
     }
     // store output
     if (std::is_same<OoutputType, uint8_t>::value
