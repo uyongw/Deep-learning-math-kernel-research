@@ -21,14 +21,14 @@ DEFINE_bool(validate_results, false,
 DEFINE_bool(with_bias, true, "on|off. With bias. Default: on");
 DEFINE_bool(with_relu, false, "on|off. With relu. Default: off");
 DEFINE_bool(with_argmax, false, "on|off. With argmax. Default: off");
-DEFINE_int32(repeated_layer, 16, "Number of repeated layers. Default: 16");
+DEFINE_int32(repeated_layer, 1, "Number of repeated layers. Default: 1");
 DEFINE_bool(dbuffering, false, "Double buffering. Default: off");
 DEFINE_bool(output_as_input, false,
             "Output of layer n used as input of layer n+1. Default: off");
 DEFINE_string(alg, "wino",
               "deconv|auto|wino|direct|direct_1x1. Algorithm. Default: wino");
-DEFINE_int32(tile_size, 5, "Winograd tile size: 5");
-DEFINE_int32(nthreads, 1, "Number of threads per team");
+DEFINE_int32(tile_size, 0, "Winograd tile size: 0");
+DEFINE_int32(nthreads, 0, "Number of threads per team");
 DEFINE_string(execution_mode, "0x0", "Execution mode");
 DEFINE_int32(flt_o, 1, "OC flatting");
 DEFINE_int32(flt_t, 1, "Tile flatting");
@@ -65,5 +65,6 @@ DEFINE_double(tinput_cali_z, 0.0,
 DEFINE_string(input_data_file, "", "Input data file(nchw)");
 DEFINE_string(weights_data_file, "", "Weights data file(oihw)");
 DEFINE_string(bias_data_file, "", "Bias data file");
+DEFINE_string(name, "ioi", "Name of layer");
 DEFINE_bool(disable_autoparam, true, "Disable autoparam");
 

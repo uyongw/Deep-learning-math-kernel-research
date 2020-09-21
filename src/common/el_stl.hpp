@@ -1,11 +1,10 @@
 #pragma once
 
 #include <type_traits>
-#include <boost/preprocessor/repetition/repeat_from_to.hpp>
-#include <boost/preprocessor/tuple/elem.hpp>
 #include "el_def.hpp"
 
 // Euler non-standard STL utilities
+namespace euler {
 namespace estl {
 
 // Integer container
@@ -133,31 +132,6 @@ typename std::enable_if<std::is_base_of<sequence, S>{}, R>::type get()
 // };
 //
 
-#define ONE_ITER(z, n, data)                                                   \
-  {                                                                            \
-    constexpr int(BOOST_PP_TUPLE_ELEM(2, 0, data)) = n;                        \
-    BOOST_PP_TUPLE_ELEM(2, 1, data);                                           \
-  }
-
-// C-preprocessing based inline loop
-//
-// i: indexer
-// from: loop lower bound, must be an immediate number
-// to: loop upper bound, must be an immediate number
-// ...: loop body
-#define LOOP_FROM_TO(i, from, to, ...)                                         \
-  do {                                                                         \
-    BOOST_PP_REPEAT_FROM_TO(from, to, ONE_ITER, (i, __VA_ARGS__));             \
-  } while (0)
-
-// Loops using on LOOP_FROM_TO
-//
-// LOOP_FROM_TO(_O, 0, 3, {
-//   LOOP_FROM_TO(_T, 0, 3, {
-//     printf("_O=%d, _T=%d\n", _O, _T);
-//   });
-// });
-
 template <typename T, int n>
 struct mm_reg {
   T& get() { return t_; }
@@ -282,4 +256,5 @@ std::size_t size(T (&)[N])
     return N;
 }
 
-} // estl
+} // namespace estl
+} // namepsace euler

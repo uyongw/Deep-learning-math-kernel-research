@@ -12,11 +12,11 @@ template <typename OutputType, typename BiasType,
     int format, bool is_border, bool with_bias, bool with_relu,
     bool with_ip_sum, int V>
 struct elk_conv_wino_trans_output<float,OutputType, BiasType, format,
-    is_border, with_bias, with_relu, with_ip_sum, ISA_SKX_AVX512, 6, 3, V> {
+    is_border, with_bias, with_relu, with_ip_sum, ISA_AVX512, 6, 3, V> {
   constexpr static int A = 6;
   constexpr static int K = 3;
 
-  static void execute(elx_conv_params_t &xc, OutputType *output,
+  static void execute(elx_param_t &ep, OutputType *output,
       float *toutput, BiasType *bias, int hOA_end, int wOA_end)
   {
     __m<V> mrepS, mzp;
@@ -24,12 +24,12 @@ struct elk_conv_wino_trans_output<float,OutputType, BiasType, format,
     MD3(float, atoutput, toutput, A, A, V);
     if (std::is_same<OutputType, uint8_t>::value
         || std::is_same<OutputType, int8_t>::value) {
-      mrepS = _mm<V>::set1_ps(xc.output_quant_repS);
-      mzp = _mm<V>::set1_ps(xc.output_quant_z);
+      mrepS = _mm<V>::set1_ps(ep.output_quant_repS);
+      mzp = _mm<V>::set1_ps(ep.output_quant_z);
     }
 
     bool fuse_ip_sum = with_ip_sum && (wOA_end != -1);
-    // TODO replace bias != nullptr with last_ic4 condition
+    // TODO replace bias != nullptr with last_I4 condition
     bool fuse_bias = with_bias && (bias != nullptr);
     bool fuse_relu = with_relu && (bias != nullptr);
 
@@ -39,13 +39,13 @@ struct elk_conv_wino_trans_output<float,OutputType, BiasType, format,
         MD3(OutputType, aoutput, output, A - K + 1, A - K + 1, V);
         return &md3(aoutput, _h, _w, 0);
       } else if (format == TKF_BLOCKED) {
-        MD3(OutputType, aoutput, output, xc.oh, xc.ow, V);
+        MD3(OutputType, aoutput, output, ep.oh, ep.ow, V);
         if (is_border && (_h > hOA_end || _w > wOA_end))
           return dummy;
         else
           return &md3(aoutput, _h, _w, 0);
       } else {
-        MD3(OutputType, aoutput, output, xc.oh, xc.ow, xc.oc);
+        MD3(OutputType, aoutput, output, ep.oh, ep.ow, ep.oc);
         if (is_border && (_h > hOA_end || _w > wOA_end))
           return dummy;
         else
@@ -73,19 +73,19 @@ struct elk_conv_wino_trans_output<float,OutputType, BiasType, format,
   })
 
 #define STORE_PS(mem, reg)                                                     \
-  if (xc.streaming_output) {                                                   \
+  if (ep.streaming_output) {                                                   \
     _mm<V>::stream_ps(mem, reg);                                               \
   } else {                                                                     \
     _mm<V>::store_ps(mem, reg);                                                \
   }
 #define STORE_SI128(mem, reg)                                                  \
-  if (xc.streaming_output) {                                                   \
+  if (ep.streaming_output) {                                                   \
     _mm_stream_si128(mem, reg);                                                \
   } else {                                                                     \
     _mm_store_si128(mem, reg);                                                 \
   }
 #define STORE_SI256(mem, reg)                                                  \
-  if (xc.streaming_output) {                                                   \
+  if (ep.streaming_output) {                                                   \
     _mm<V/2>::stream_si256(mem, reg);                                          \
   } else {                                                                     \
     _mm<V/2>::store_si256(mem, reg);                                           \
@@ -110,7 +110,7 @@ struct elk_conv_wino_trans_output<float,OutputType, BiasType, format,
     STORE_SI256((__m256i *)out_ptr(i, j), f16);                                \
   }
 
-    float M[4][6][16];
+    alignas(64) float M[4][6][16];
 
     __m<V> z0 = _mm<V>::set1_ps(1.5f);
     __m<V> z1 = _mm<V>::set1_ps(2.25f);

@@ -9,18 +9,18 @@
 namespace euler {
 
 template <typename WeightsType, int V>
-struct elk_conv_wino_trans_weights<float, WeightsType, ISA_SKX_AVX512,
+struct elk_conv_wino_trans_weights<float, WeightsType, ISA_AVX512,
     6, 3, V> {
   constexpr static int A = 6;
   constexpr static int K = 3;
-  constexpr static int I = ISA_SKX_AVX512;
+  constexpr static int I = ISA_AVX512;
 
   static void execute(
       float atweights[A][A][V][V], WeightsType aweights[K][K][V][V])
   {
     ENABLE_AVX512F();
 
-    float M[6][3][16];
+    alignas(64) float M[6][3][16];
 
     auto z0 = _mm<V>::set1_ps(0.26890756302521f);
     auto z1 = _mm<V>::set1_ps(-0.688403361344538f);

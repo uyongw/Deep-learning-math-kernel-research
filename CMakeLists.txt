@@ -5,7 +5,8 @@ include(CMakeDependentOption)
 project(Euler CXX C)
 
 option(WITH_TEST "Build with test cases" ON)
-option(WITH_VNNI "With CLX VNNI support" OFF)
+option(WITH_VNNI "With VNNI/INT8 support" OFF)
+option(WITH_DPBF16 "With BF16 dot-product support" OFF)
 option(ENABLE_USER_FP16 "User FP16 type support" OFF)
 
 if (NOT DEFINED MT_RUNTIME)
@@ -75,75 +76,56 @@ elseif(${CMAKE_BUILD_TYPE} MATCHES "Profiling")
 endif()
 
 include("cmake/flags.cmake")
-include("cmake/required.cmake")
-
 
 # find src files
 file (GLOB __euler_source
+  src/common/el_log.cpp
   src/eld_conv.cpp
   src/elx_conv.cpp
   src/elx_conv_wino_trans_input.cpp
   src/elx_conv_wino_trans_weights.cpp
   src/elx_conv_wino_gemm.cpp
-  src/elx_conv_wino_u8s8_gemm.cpp
   src/elx_conv_wino_trans_output.cpp
   src/elx_conv_wino.cpp
-  src/elx_conv_wino_xopt.cpp
-  src/elx_conv_wino_bind.cpp
-  src/elx_conv_wino_lp.cpp
-  src/elx_conv_wino_lp_xopt.cpp
-  src/elx_conv_wino_lp_bind.cpp
-  src/elx_conv_direct_1x1_bind.cpp
+  src/elx_int8_conv_wino_gemm.cpp
+  src/elx_int8_conv_wino.cpp
   src/elx_conv_direct_1x1.cpp
-  src/elx_conv_direct_1x1_xopt.cpp
-  src/elx_conv_direct_1x1_lp_bind.cpp
-  src/elx_conv_direct_1x1_lp.cpp
-  src/elx_conv_direct_1x1_lp_xopt.cpp
-  src/elx_conv_direct_bind.cpp
+  src/elx_int8_conv_direct_1x1.cpp
   src/elx_conv_direct.cpp
-  src/elx_conv_direct_xopt.cpp
-  src/elx_conv_direct_vmg_bind.cpp
   src/elx_conv_direct_vmg.cpp
-  src/elx_conv_direct_vmg_xopt.cpp
-  src/elx_conv_direct_lp_bind.cpp
-  src/elx_conv_direct_lp.cpp
-  src/elx_conv_direct_lp_xopt.cpp
-  src/elx_deconv_direct_bind.cpp
+  src/elx_int8_conv_direct.cpp
   src/elx_deconv_direct.cpp
-  src/elx_deconv_direct_xopt.cpp
-  src/elx_conv_direct_depthwise_lp.cpp
-  src/elx_conv_direct_depthwise_lp_xopt.cpp
-  src/elx_conv_direct_depthwise_lp_bind.cpp
+  src/elx_int8_conv_direct_depthwise.cpp
   src/elx_stream.cpp
   src/elx_reorder.cpp
   src/el_init.cpp)
 
 set(KGEMM_GEN_DIR ${CMAKE_BINARY_DIR}/kgen)
-set(BUILD_KGEMM_GEN_CMD ${KGEMM_GEN_DIR}/kgemm_gen.sh)
-set(BUILD_U8S8_KGEMM_GEN_CMD ${KGEMM_GEN_DIR}/u8s8_kgemm_gen.sh)
-set(BUILD_KCONV_GEN_CMD ${KGEMM_GEN_DIR}/kconv_gen.sh)
-set(BUILD_U8S8_KCONV_GEN_CMD ${KGEMM_GEN_DIR}/u8s8_kconv_gen.sh)
-set(BUILD_U8S8_DEPTHWISE_KCONV_GEN_CMD ${KGEMM_GEN_DIR}/u8s8_depthwise_kconv_gen.sh)
-set(BUILD_VMG_KCONV_GEN_CMD ${KGEMM_GEN_DIR}/vmg_kconv_gen.sh)
-set(BUILD_KGEMM_GEN_SRC1 ${KGEMM_GEN_DIR}/elk_gemm_otj_binder.hxx)
-set(BUILD_KGEMM_GEN_SRC2 ${KGEMM_GEN_DIR}/elk_u8s8_gemm_otj_binder.hxx)
-set(BUILD_KCONV_GEN_SRC1 ${KGEMM_GEN_DIR}/elk_conv_otj_binder.hxx)
-set(BUILD_KCONV_GEN_SRC2 ${KGEMM_GEN_DIR}/elk_u8s8_conv_otj_binder.hxx)
-set(BUILD_KCONV_GEN_SRC3 ${KGEMM_GEN_DIR}/elk_vmg_conv_otj_binder.hxx)
-set(BUILD_KCONV_GEN_SRC4 ${KGEMM_GEN_DIR}/elk_u8s8_depthwise_conv_otj_binder.hxx)
+set(BUILD_KGEMM_GEN_CMD ${KGEMM_GEN_DIR}/elk_gemm_gen.sh)
+set(BUILD_U8S8_KGEMM_GEN_CMD ${KGEMM_GEN_DIR}/elk_u8s8_gemm_gen.sh)
+set(BUILD_KCONV_GEN_CMD ${KGEMM_GEN_DIR}/elk_conv_gen.sh)
+set(BUILD_U8S8_KCONV_GEN_CMD ${KGEMM_GEN_DIR}/elk_u8s8_conv_gen.sh)
+set(BUILD_U8S8_DEPTHWISE_KCONV_GEN_CMD ${KGEMM_GEN_DIR}/elk_u8s8_depthwise_conv_gen.sh)
+set(BUILD_VMG_KCONV_GEN_CMD ${KGEMM_GEN_DIR}/elk_vmg_conv_gen.sh)
+set(BUILD_KGEMM_GEN_SRC1 ${KGEMM_GEN_DIR}/elk_gemm_binder.hxx)
+set(BUILD_KGEMM_GEN_SRC2 ${KGEMM_GEN_DIR}/elk_u8s8_gemm_binder.hxx)
+set(BUILD_KCONV_GEN_SRC1 ${KGEMM_GEN_DIR}/elk_conv_binder.hxx)
+set(BUILD_KCONV_GEN_SRC2 ${KGEMM_GEN_DIR}/elk_u8s8_conv_binder.hxx)
+set(BUILD_KCONV_GEN_SRC3 ${KGEMM_GEN_DIR}/elk_vmg_conv_binder.hxx)
+set(BUILD_KCONV_GEN_SRC4 ${KGEMM_GEN_DIR}/elk_u8s8_depthwise_conv_binder.hxx)
 
-set(KGEMM_GEN_CMD ${CMAKE_HOME_DIRECTORY}/src/kernel/kgemm_gen.sh)
-set(U8S8_KGEMM_GEN_CMD ${CMAKE_HOME_DIRECTORY}/src/kernel/u8s8_kgemm_gen.sh)
-set(KCONV_GEN_CMD ${CMAKE_HOME_DIRECTORY}/src/kernel/kconv_gen.sh)
-set(VMG_KCONV_GEN_CMD ${CMAKE_HOME_DIRECTORY}/src/kernel/vmg_kconv_gen.sh)
-set(U8S8_KCONV_GEN_CMD ${CMAKE_HOME_DIRECTORY}/src/kernel/u8s8_kconv_gen.sh)
-set(U8S8_DEPTHWISE_KCONV_GEN_CMD ${CMAKE_HOME_DIRECTORY}/src/kernel/u8s8_depthwise_kconv_gen.sh)
-set(KGEMM_GEN_SRC1 ${CMAKE_HOME_DIRECTORY}/src/kernel/elk_gemm_otj_binder.hxx)
-set(KGEMM_GEN_SRC2 ${CMAKE_HOME_DIRECTORY}/src/kernel/elk_u8s8_gemm_otj_binder.hxx)
-set(KCONV_GEN_SRC1 ${CMAKE_HOME_DIRECTORY}/src/kernel/elk_conv_otj_binder.hxx)
-set(KCONV_GEN_SRC2 ${CMAKE_HOME_DIRECTORY}/src/kernel/elk_u8s8_conv_otj_binder.hxx)
-set(KCONV_GEN_SRC3 ${CMAKE_HOME_DIRECTORY}/src/kernel/elk_vmg_conv_otj_binder.hxx)
-set(KCONV_GEN_SRC4 ${CMAKE_HOME_DIRECTORY}/src/kernel/elk_u8s8_depthwise_conv_otj_binder.hxx)
+set(KGEMM_GEN_CMD ${CMAKE_HOME_DIRECTORY}/src/kernel/elk_gemm_gen.sh)
+set(U8S8_KGEMM_GEN_CMD ${CMAKE_HOME_DIRECTORY}/src/kernel/elk_u8s8_gemm_gen.sh)
+set(KCONV_GEN_CMD ${CMAKE_HOME_DIRECTORY}/src/kernel/elk_conv_gen.sh)
+set(VMG_KCONV_GEN_CMD ${CMAKE_HOME_DIRECTORY}/src/kernel/elk_vmg_conv_gen.sh)
+set(U8S8_KCONV_GEN_CMD ${CMAKE_HOME_DIRECTORY}/src/kernel/elk_u8s8_conv_gen.sh)
+set(U8S8_DEPTHWISE_KCONV_GEN_CMD ${CMAKE_HOME_DIRECTORY}/src/kernel/elk_u8s8_depthwise_conv_gen.sh)
+set(KGEMM_GEN_SRC1 ${CMAKE_HOME_DIRECTORY}/src/kernel/elk_gemm_binder.hxx)
+set(KGEMM_GEN_SRC2 ${CMAKE_HOME_DIRECTORY}/src/kernel/elk_u8s8_gemm_binder.hxx)
+set(KCONV_GEN_SRC1 ${CMAKE_HOME_DIRECTORY}/src/kernel/elk_conv_binder.hxx)
+set(KCONV_GEN_SRC2 ${CMAKE_HOME_DIRECTORY}/src/kernel/elk_u8s8_conv_binder.hxx)
+set(KCONV_GEN_SRC3 ${CMAKE_HOME_DIRECTORY}/src/kernel/elk_vmg_conv_binder.hxx)
+set(KCONV_GEN_SRC4 ${CMAKE_HOME_DIRECTORY}/src/kernel/elk_u8s8_depthwise_conv_binder.hxx)
 
 execute_process(COMMAND mkdir -p ${KGEMM_GEN_DIR})
 configure_file(${KGEMM_GEN_CMD} ${BUILD_KGEMM_GEN_CMD} COPYONLY)

@@ -15,6 +15,8 @@
 
 using namespace euler;
 
+bool verbose = false;
+
 // Covolution options
 int mb = 0, g = 1, ic = 0, ih = 0, iw = 0, oc = 0, oh = 0, ow = 0, kh = 3, kw = 3;
 int ph = 1, pw = 1, sh = 1, sw = 1, dh = 1, dw = 1;
@@ -46,6 +48,7 @@ bool with_real_data = false;
 euler::sampling_kind_t sampling_kind = euler::CALIBRATED;
 float tinput_cali_s = FLT_MAX;
 float tinput_cali_z = FLT_MAX;
+std::string name;
 
 int parse_cmd_options(int argc, char **argv) {
 
@@ -96,6 +99,7 @@ int parse_cmd_options(int argc, char **argv) {
   tinput_cali_s = FLAGS_tinput_cali_s;
   tinput_cali_z = FLAGS_tinput_cali_z;
   disable_autoparam = FLAGS_disable_autoparam;
+  name = FLAGS_name;
 
   std::transform(FLAGS_alg.begin(), FLAGS_alg.end(), FLAGS_alg.begin(),
                  ::toupper);
@@ -125,9 +129,9 @@ int parse_cmd_options(int argc, char **argv) {
       (execution_mode == 0xa161 || execution_mode == 0xa133 ||
        execution_mode == 0xa173)) {
     is_int8_lp = true;
-  } else if (alg == CONV_DIRECT_1X1 && (execution_mode == 0xc160 || execution_mode == 0xb161)) {
+  } else if (alg == CONV_DIRECT_1X1 && (execution_mode == 0xa160)) {
     is_int8_lp = true;
-  } else if (alg == CONV_DIRECT && (execution_mode == 0xd160 || execution_mode == 0xa160)) {
+  } else if (alg == CONV_DIRECT && (execution_mode == 0xa160 || execution_mode == 0xc160)) {
     is_int8_lp = true;
   }
 
@@ -218,7 +222,8 @@ int parse_cmd_options(int argc, char **argv) {
   iw = iw == 0 ? ih : iw;
   ow = ow == 0 ? oh : ow;
 
-  printf("Convolution options:\n"
+  if (verbose) {
+    printf("Convolution options:\n"
          "mb:%d, g:%d, ic:%d, ih:%d, iw:%d, oc:%d, oh:%d, ow:%d, kh:%d, kw:%d, "
          "ph:%d, pw:%d, sh:%d, sw:%d, dh:%d, dw:%d\n"
          "with_bias:%d, with_relu:%d, with_ip_sum:%d, with_argmax:%d, "
@@ -233,56 +238,57 @@ int parse_cmd_options(int argc, char **argv) {
          flt_o, flt_t, blk_i, blk_o, pat_i, pat_o, pat_g, streaming_input,
          streaming_output, nthreads, execution_mode);
 
-  std::unordered_map<int, const char *> prop_kind_str{
-      {forward_training, "forward_training"},
-      {forward_inference, "forward_inference"},
-      {backward_data, "backward_data"},
-      {backward_weights, "backward_weights"}};
-  printf("prop_kind:%s\n", prop_kind_str[prop_kind]);
+    std::unordered_map<int, const char *> prop_kind_str{
+        {forward_training, "forward_training"},
+        {forward_inference, "forward_inference"},
+        {backward_data, "backward_data"},
+        {backward_weights, "backward_weights"}};
+    printf("prop_kind:%s\n", prop_kind_str[prop_kind]);
 
-  std::unordered_map<int, const char *> alg_str{
-      {CONV_AUTO, "CONV_AUTO"},
-      {CONV_WINOGRAD, "CONV_WINOGRAD"},
-      {CONV_DIRECT, "CONV_DIRECT"},
-      {CONV_DIRECT_1X1, "CONV_DIRECT_1X1"}};
-  printf("alg:%s", alg_str[alg]);
-  if (alg == CONV_WINOGRAD)
-    printf(", tile-size=%d", tile_size);
-  printf("\n");
+    std::unordered_map<int, const char *> alg_str{
+        {CONV_AUTO, "CONV_AUTO"},
+        {CONV_WINOGRAD, "CONV_WINOGRAD"},
+        {CONV_DIRECT, "CONV_DIRECT"},
+        {CONV_DIRECT_1X1, "CONV_DIRECT_1X1"}};
+    printf("alg:%s", alg_str[alg]);
+    if (alg == CONV_WINOGRAD)
+      printf(", tile-size=%d", tile_size);
+    printf("\n");
 
-  std::unordered_map<int, const char *> fmt_str{
-      {nchw, "nchw"}, {nhwc, "nhwc"},       {oihw, "oihw"},
-      {hwio, "hwio"}, {nChw16c, "nChw16c"}, {OIhw16i16o, "OIhw16i16o"},
-      {goihw, "goihw"}, {ghwio, "ghwio"},   {gOIhw16i16o, "gOIhw16i16o"}};
-  printf("input-fmt:%s, weights-fmt:%s, output-fmt:%s\n", fmt_str[input_format],
-         fmt_str[weights_format], fmt_str[output_format]);
-  printf("input-as-blocked:%d, weights_as_blocked:%d, output_as_blocked:%d\n",
-         input_as_blocked, weights_as_blocked, output_as_blocked);
-  printf("double_buffering: %d, output_as_input=%d\n", double_buffering,
-         output_as_input);
+    std::unordered_map<int, const char *> fmt_str{
+        {nchw, "nchw"}, {nhwc, "nhwc"},       {oihw, "oihw"},
+        {hwio, "hwio"}, {nChw16c, "nChw16c"}, {OIhw16i16o, "OIhw16i16o"},
+        {goihw, "goihw"}, {ghwio, "ghwio"},   {gOIhw16i16o, "gOIhw16i16o"}};
+    printf("input-fmt:%s, weights-fmt:%s, output-fmt:%s\n", fmt_str[input_format],
+           fmt_str[weights_format], fmt_str[output_format]);
+    printf("input-as-blocked:%d, weights_as_blocked:%d, output_as_blocked:%d\n",
+           input_as_blocked, weights_as_blocked, output_as_blocked);
+    printf("double_buffering: %d, output_as_input=%d\n", double_buffering,
+           output_as_input);
 
-  // TODO: support tinput quantization only so far
-  if (sampling_kind == euler::CALIBRATED && tinput_cali_s == 0.0 &&
-      tinput_cali_z == 0.0) {
-    tinput_cali_s = 1.0;
-    tinput_cali_z = 1.0;
-    printf("sampling-kind<CALIBRATED> tinput calibration scale: %f <dummy> "
-           "zero: %f <dummy>\n",
-           tinput_cali_s, tinput_cali_z);
-  } else if (sampling_kind == euler::CALIBRATED) {
-    printf("sampling-kind<CALIBRATED> tinput calibration scale: %f zero: %f\n",
-           tinput_cali_s, tinput_cali_z);
-  } else if (sampling_kind == euler::COARSE) {
-    printf("sampling-kind<COARSES>\n");
-  } else if (sampling_kind == euler::FINE) {
-    printf("sampling-kind<FINE>\n");
-  }
+    // TODO: support tinput quantization only so far
+    if (sampling_kind == euler::CALIBRATED && tinput_cali_s == 0.0 &&
+        tinput_cali_z == 0.0) {
+      tinput_cali_s = 1.0;
+      tinput_cali_z = 1.0;
+      printf("sampling-kind<CALIBRATED> tinput calibration scale: %f <dummy> "
+             "zero: %f <dummy>\n",
+             tinput_cali_s, tinput_cali_z);
+    } else if (sampling_kind == euler::CALIBRATED) {
+      printf("sampling-kind<CALIBRATED> tinput calibration scale: %f zero: %f\n",
+             tinput_cali_s, tinput_cali_z);
+    } else if (sampling_kind == euler::COARSE) {
+      printf("sampling-kind<COARSES>\n");
+    } else if (sampling_kind == euler::FINE) {
+      printf("sampling-kind<FINE>\n");
+    }
 
-  if (mb <= 0 || g <= 0 || ic <= 0 || ih <= 0 || iw <= 0 || oc <= 0 ||
-      oh <= 0 || ow <= 0 || kh <= 0 || kw <= 0) {
-    printf("Error: convolution options: mb|g|ic|ih|iw|oc|oh|ow|kh|kw should "
-           "greater than 0\n");
-    return -1;
+    if (mb <= 0 || g <= 0 || ic <= 0 || ih <= 0 || iw <= 0 || oc <= 0 ||
+        oh <= 0 || ow <= 0 || kh <= 0 || kw <= 0) {
+      printf("Error: convolution options: mb|g|ic|ih|iw|oc|oh|ow|kh|kw should "
+             "greater than 0\n");
+      return -1;
+    }
   }
 
   return 0;
@@ -333,6 +339,7 @@ static inline eld_conv_t &create_conv_desc(eld_conv_t &desc,
   desc.sampling_kind = sampling_kind;
   desc.use_scratch_pad = false;
   desc.disable_autoparam = disable_autoparam;
+  desc.name = name;
   return desc;
 }
 
@@ -362,7 +369,7 @@ static inline int conv_ref_setup(eld_conv_t &desc) {
     size_t IC = ALIGNUP(desc.dims.ic, 16);
     size_t tinput_byte_size = A * A * IC * t * sizeof(float);
 
-    MEMALIGN64(&desc.scratch_pad, tinput_byte_size);
+    memalign64(&desc.scratch_pad, tinput_byte_size);
     desc.use_scratch_pad = true;
     desc.execution_mode = 0xa033;
     fully_setup = true;
@@ -442,7 +449,7 @@ static inline void conv_bench(eld_conv_t convs[], eld_conv_t &conv_ref,
     }
   }
 
-  timer.report_tflops("conv", C * (N / C), num_ops);
+  timer.report_tflops(name, C * (N / C), num_ops);
 }
 
 #define RL_MAX 128
@@ -468,10 +475,10 @@ int main(int argc, char **argv) {
 
   bool reuse_inout = double_buffering || output_as_input;
 
-  MEMALIGN64(&input_ref, conv_ref.byte_sizes.input);
-  MEMALIGN64(&output_ref, conv_ref.byte_sizes.output);
-  MEMALIGN64(&weights_ref, conv_ref.byte_sizes.weights);
-  MEMALIGN64(&bias_ref, conv_ref.byte_sizes.bias);
+  memalign64(&input_ref, conv_ref.byte_sizes.input);
+  memalign64(&output_ref, conv_ref.byte_sizes.output);
+  memalign64(&weights_ref, conv_ref.byte_sizes.weights);
+  memalign64(&bias_ref, conv_ref.byte_sizes.bias);
 
 #define _prepare_conv_data(itype, wtype, otype, btype)                         \
   do {                                                                         \
@@ -528,20 +535,21 @@ int main(int argc, char **argv) {
     void *output_val = output[C - 1];
 
     printf("Validation: ");
+
     if (test::ref_conv_deconv_2d<float>(conv_ref, output_ref, input_ref,
                                         weights_ref, bias_ref)) {
       printf("Fail: Convolution ref execution error!\n");
     } else {
       float *_output;
-      MEMALIGN64(&_output, conv_ref.byte_sizes.output);
+      memalign64(&_output, conv_ref.byte_sizes.output);
       test::post_process_conv_results(_output, conv_val, output_val,
                                       data_type_cfg);
 
       if (test::compare_conv_results(conv_ref, _output, output_ref,
                                      data_type_cfg, is_int8_lp, with_real_data))
-        printf("Fail: Convolution results not correct!\n");
+        printf("%s: Fail: Convolution results not correct!\n", name.c_str());
       else
-        printf("Convolution Pass!\n");
+        printf("%s: Convolution Pass!\n", name.c_str());
       free(_output);
     }
   } else {

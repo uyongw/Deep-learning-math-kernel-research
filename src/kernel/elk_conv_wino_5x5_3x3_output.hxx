@@ -15,18 +15,18 @@ namespace euler {
     p = p + _mm<V>::cvtph_ps(f16v);                                            \
   }
 
-#define AVX512_CALCULATE_O_0(z, n, nil)                                        \
+#define AVX512_CALCULATE_O_0(n)                                                \
   c##n = t##n##0 + t##n##1 + t##n##2 + t##n##3 + t##n##4 + t##n##5;
-#define AVX512_CALCULATE_O_1(z, n, nil)                                        \
+#define AVX512_CALCULATE_O_1(n)                                                \
   c##n = ((z2 * (t##n##2 - t##n##3) + t##n##0)                                 \
           + (z1_2 * (t##n##4 - t##n##5) - t##n##1));
-#define AVX512_CALCULATE_O_2(z, n, nil)                                        \
+#define AVX512_CALCULATE_O_2(n)                                                \
   c##n = ((z4 * (t##n##2 + t##n##3) + t##n##0)                                 \
           + (z1_4 * (t##n##4 + t##n##5) + t##n##1));
-#define AVX512_CALCULATE_O_3(z, n, nil)                                        \
+#define AVX512_CALCULATE_O_3(n)                                                \
   c##n = ((z8 * (t##n##2 - t##n##3) + t##n##0)                                 \
           + (z1_8 * (t##n##4 - t##n##5) - t##n##1));
-#define AVX512_CALCULATE_O_4(z, n, nil)                                        \
+#define AVX512_CALCULATE_O_4(n)                                                \
   c##n = ((z16 * (t##n##2 + t##n##3) + (t##n##0 + t##n##1))                    \
           + (z1_16 * (t##n##4 + t##n##5) + t##n##6));
 
@@ -85,11 +85,11 @@ template <typename OutputType, typename BiasType,
     int format, bool is_border, bool with_bias, bool with_relu,
     bool with_ip_sum, int V>
 struct elk_conv_wino_trans_output<float, OutputType, BiasType, format,
-    is_border, with_bias, with_relu, with_ip_sum, ISA_SKX_AVX512, 7, 3, V> {
+    is_border, with_bias, with_relu, with_ip_sum, ISA_AVX512, 7, 3, V> {
   constexpr static int A = 7;
   constexpr static int K = 3;
 
-  static void execute(elx_conv_params_t &xc, OutputType *output,
+  static void execute(elx_param_t &ep, OutputType *output,
       float *toutput, BiasType *bias, int hOA_end, int wOA_end)
   {
     ENABLE_AVX512F();
@@ -104,13 +104,13 @@ struct elk_conv_wino_trans_output<float, OutputType, BiasType, format,
         MD3(OutputType, aoutput, output, A - K + 1, A - K + 1, V);
         return &md3(aoutput, _h, _w, 0);
       } else if (format == TKF_BLOCKED) {
-        MD3(OutputType, aoutput, output, xc.oh, xc.ow, V);
+        MD3(OutputType, aoutput, output, ep.oh, ep.ow, V);
         if (is_border && (_h > hOA_end || _w > wOA_end))
           return dummy;
         else
           return &md3(aoutput, _h, _w, 0);
       } else {
-        MD3(OutputType, aoutput, output, xc.oh, xc.ow, xc.oc);
+        MD3(OutputType, aoutput, output, ep.oh, ep.ow, ep.oc);
         if (is_border && (_h > hOA_end || _w > wOA_end))
           return dummy;
         else
@@ -120,14 +120,14 @@ struct elk_conv_wino_trans_output<float, OutputType, BiasType, format,
 
     __m<V> c0, c1, c2, c3, c4, c5, zero;
 
-    __m<V> z2 = _mm<V>::set_ps(IMM_BCAST16(2.0f));
-    __m<V> z4 = _mm<V>::set_ps(IMM_BCAST16(4.0f));
-    __m<V> z8 = _mm<V>::set_ps(IMM_BCAST16(8.0f));
-    __m<V> z16 = _mm<V>::set_ps(IMM_BCAST16(16.0f));
-    __m<V> z1_2 = _mm<V>::set_ps(IMM_BCAST16(1.0f / 2.0f));
-    __m<V> z1_4 = _mm<V>::set_ps(IMM_BCAST16(1.0f / 4.0f));
-    __m<V> z1_8 = _mm<V>::set_ps(IMM_BCAST16(1.0f / 8.0f));
-    __m<V> z1_16 = _mm<V>::set_ps(IMM_BCAST16(1.0f / 16.0f));
+    __m<V> z2 = _mm<V>::set1_ps(2.0f);
+    __m<V> z4 = _mm<V>::set1_ps(4.0f);
+    __m<V> z8 = _mm<V>::set1_ps(8.0f);
+    __m<V> z16 = _mm<V>::set1_ps(16.0f);
+    __m<V> z1_2 = _mm<V>::set1_ps(1.0f / 2.0f);
+    __m<V> z1_4 = _mm<V>::set1_ps(1.0f / 4.0f);
+    __m<V> z1_8 = _mm<V>::set1_ps(1.0f / 8.0f);
+    __m<V> z1_16 = _mm<V>::set1_ps(1.0f / 16.0f);
 
     __m<V> t00 = _mm<V>::load_ps(&md3(atoutput, 0, 0, 0));
     __m<V> t01 = _mm<V>::load_ps(&md3(atoutput, 0, 1, 0));
@@ -172,22 +172,42 @@ struct elk_conv_wino_trans_output<float, OutputType, BiasType, format,
     __m<V> t64 = _mm<V>::load_ps(&md3(atoutput, 6, 4, 0));
     __m<V> t65 = _mm<V>::load_ps(&md3(atoutput, 6, 5, 0));
 
-    BOOST_PP_REPEAT(6, AVX512_CALCULATE_O_0, nil)
+    AVX512_CALCULATE_O_0(0);
+    AVX512_CALCULATE_O_0(1);
+    AVX512_CALCULATE_O_0(2);
+    AVX512_CALCULATE_O_0(3);
+    AVX512_CALCULATE_O_0(4);
+    AVX512_CALCULATE_O_0(5);
     AVX512_CALCULATE_O(0);
     p40 = p40 + t60 + t61 + t62 + t63 + t64 + t65;
     AVX512_ADD_B(0)
 
-    BOOST_PP_REPEAT(6, AVX512_CALCULATE_O_1, nil)
+    AVX512_CALCULATE_O_1(0);
+    AVX512_CALCULATE_O_1(1);
+    AVX512_CALCULATE_O_1(2);
+    AVX512_CALCULATE_O_1(3);
+    AVX512_CALCULATE_O_1(4);
+    AVX512_CALCULATE_O_1(5);
     AVX512_CALCULATE_O(1);
     p41 = p41 + z2 * (t62 - t63) + (z1_2 * (t64 - t65) + (t60 - t61));
     AVX512_ADD_B(1)
 
-    BOOST_PP_REPEAT(6, AVX512_CALCULATE_O_2, nil)
+    AVX512_CALCULATE_O_2(0);
+    AVX512_CALCULATE_O_2(1);
+    AVX512_CALCULATE_O_2(2);
+    AVX512_CALCULATE_O_2(3);
+    AVX512_CALCULATE_O_2(4);
+    AVX512_CALCULATE_O_2(5);
     AVX512_CALCULATE_O(2);
     p42 = p42 + (z4 * (t62 + t63) + (z1_4 * (t64 + t65) + (t60 + t61)));
     AVX512_ADD_B(2)
 
-    BOOST_PP_REPEAT(6, AVX512_CALCULATE_O_3, nil)
+    AVX512_CALCULATE_O_3(0);
+    AVX512_CALCULATE_O_3(1);
+    AVX512_CALCULATE_O_3(2);
+    AVX512_CALCULATE_O_3(3);
+    AVX512_CALCULATE_O_3(4);
+    AVX512_CALCULATE_O_3(5);
     AVX512_CALCULATE_O(3);
     p43 = p43 + (z8 * (t62 - t63) + (z1_8 * (t64 - t65) + (t60 - t61)));
     AVX512_ADD_B(3)
@@ -199,7 +219,12 @@ struct elk_conv_wino_trans_output<float, OutputType, BiasType, format,
     __m<V> t46 = _mm<V>::load_ps(&md3(atoutput, 4, 6, 0));
     __m<V> t56 = _mm<V>::load_ps(&md3(atoutput, 5, 6, 0));
     __m<V> t66 = _mm<V>::load_ps(&md3(atoutput, 6, 6, 0));
-    BOOST_PP_REPEAT(6, AVX512_CALCULATE_O_4, nil)
+    AVX512_CALCULATE_O_4(0);
+    AVX512_CALCULATE_O_4(1);
+    AVX512_CALCULATE_O_4(2);
+    AVX512_CALCULATE_O_4(3);
+    AVX512_CALCULATE_O_4(4);
+    AVX512_CALCULATE_O_4(5);
     AVX512_CALCULATE_O(4);
     p44 = p44 + (z16 * (t62 + t63) + (z1_16 * (t64 + t65) + (t60 + t61 + t66)));
     AVX512_ADD_B(4)

@@ -29,35 +29,35 @@ class elx_conv_wino_trans_output_t {
 public:
   elx_conv_wino_trans_output_t() {}
   virtual ~elx_conv_wino_trans_output_t() {}
-  void setup(elx_conv_params_t *xc);
+  void setup(elx_param_t *ep);
 
   void execute(OutputType *output, ToutputType *toutput, BiasType *bias, int Tz,
-      int _t2, int _oc4, int _ic4);
+      int _t2, int _O4, int _I4);
   void execute(OutputType *output, ToutputType *toutput, BiasType *bias,
-      int _oc4, int _ic4);
+      int _O4, int _I4);
 
   void operator() (OutputType *output, ToutputType *toutput, BiasType *bias,
-      int Tz, int _t2, int _oc4, int _ic4) {
-    execute(output, toutput, bias, Tz, _t2, _oc4, _ic4);
+      int Tz, int _t2, int _O4, int _I4) {
+    execute(output, toutput, bias, Tz, _t2, _O4, _I4);
   }
   void operator() (OutputType *output, ToutputType *toutput, BiasType *bias,
-      int _oc4, int _ic4) {
-    execute(output, toutput, bias, _oc4, _ic4);
+      int _O4, int _I4) {
+    execute(output, toutput, bias, _O4, _I4);
   }
 
   private:
   inline void __execute_nhwc(OutputType *output, ToutputType *toutput,
-      BiasType *bias, int Tz, int _t2, int _oc4, int _ic4);
+      BiasType *bias, int Tz, int _t2, int _O4, int _I4);
   inline void __execute_nchw(OutputType *output, ToutputType *toutput,
-      BiasType *bias, int Tz, int _t2, int _oc4, int _ic4);
+      BiasType *bias, int Tz, int _t2, int _O4, int _I4);
   inline void __execute_blocked(OutputType *output, ToutputType *toutput,
-      BiasType *bias, int Tz, int _t2, int _oc4, int _ic4);
+      BiasType *bias, int Tz, int _t2, int _O4, int _I4);
   inline void __execute_nhwc(OutputType *output, ToutputType *toutput,
-      BiasType *bias, int _oc4, int _ic4);
+      BiasType *bias, int _O4, int _I4);
   inline void __execute_nchw(OutputType *output, ToutputType *toutput,
-      BiasType *bias, int _oc4, int _ic4);
+      BiasType *bias, int _O4, int _I4);
   inline void __execute_blocked(OutputType *output, ToutputType *toutput,
-      BiasType *bias, int _oc4, int _ic4);
+      BiasType *bias, int _O4, int _I4);
 
   void bind_kernel_functions();
 
@@ -70,7 +70,7 @@ public:
   decltype(elk_conv_wino_trans_output<TrOpType, OutputType, BiasType, 0,
       false, false, false, false, I, A, K, V>::execute) *ker_trans_output0_acc_;
 
-  elx_conv_params_t *xc = nullptr;
+  elx_param_t *ep = nullptr;
   bool stream_out_;
   bool output_is_bfmt_;
   bool output_as_bfmt_;
@@ -143,39 +143,5 @@ public:
   int tile_h_, tile_w_;
   int n_, t_, l_, d_, r_;
 };
-
-// user: float, tarray: float
-template class elx_conv_wino_trans_output_t<float, float, float, ISA_SKX_AVX512, 4, 3, 16>;
-template class elx_conv_wino_trans_output_t<float, float, float, ISA_SKX_AVX512, 5, 3, 16>;
-template class elx_conv_wino_trans_output_t<float, float, float, ISA_SKX_AVX512, 6, 3, 16>;
-template class elx_conv_wino_trans_output_t<float, float, float, ISA_SKX_AVX512, 7, 3, 16>;
-
-// user: float, tarray: fp16
-template class elx_conv_wino_trans_output_t<float, float, short, ISA_SKX_AVX512, 4, 3, 16>;
-template class elx_conv_wino_trans_output_t<float, float, short, ISA_SKX_AVX512, 5, 3, 16>;
-template class elx_conv_wino_trans_output_t<float, float, short, ISA_SKX_AVX512, 6, 3, 16>;
-template class elx_conv_wino_trans_output_t<float, float, short, ISA_SKX_AVX512, 7, 3, 16>;
-
-template class elx_conv_wino_trans_output_t<uint8_t, float, float, ISA_SKX_AVX512, 4, 3, 16>;
-template class elx_conv_wino_trans_output_t<uint8_t, float, float, ISA_SKX_AVX512, 5, 3, 16>;
-template class elx_conv_wino_trans_output_t<uint8_t, float, float, ISA_SKX_AVX512, 6, 3, 16>;
-
-template class elx_conv_wino_trans_output_t<int8_t, float, float, ISA_SKX_AVX512, 4, 3, 16>;
-template class elx_conv_wino_trans_output_t<int8_t, float, float, ISA_SKX_AVX512, 5, 3, 16>;
-template class elx_conv_wino_trans_output_t<int8_t, float, float, ISA_SKX_AVX512, 6, 3, 16>;
-
-#ifdef ENABLE_USER_FP16
-// user: fp16, tarray: float
-template class elx_conv_wino_trans_output_t<short, short, float, ISA_SKX_AVX512, 4, 3, 16>;
-template class elx_conv_wino_trans_output_t<short, short, float, ISA_SKX_AVX512, 5, 3, 16>;
-template class elx_conv_wino_trans_output_t<short, short, float, ISA_SKX_AVX512, 6, 3, 16>;
-template class elx_conv_wino_trans_output_t<short, short, float, ISA_SKX_AVX512, 7, 3, 16>;
-
-// user: fp16, tarray: fp16
-template class elx_conv_wino_trans_output_t<short, short, short, ISA_SKX_AVX512, 4, 3, 16>;
-template class elx_conv_wino_trans_output_t<short, short, short, ISA_SKX_AVX512, 5, 3, 16>;
-template class elx_conv_wino_trans_output_t<short, short, short, ISA_SKX_AVX512, 6, 3, 16>;
-template class elx_conv_wino_trans_output_t<short, short, short, ISA_SKX_AVX512, 7, 3, 16>;
-#endif
 
 }  // namespace euler

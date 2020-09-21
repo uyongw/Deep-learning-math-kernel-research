@@ -20,19 +20,19 @@ public:
 
   elx_conv_wino_trans_input_base() {}
   virtual ~elx_conv_wino_trans_input_base() {}
-  void setup(elx_conv_params_t *conv_xc) {
-    xc = conv_xc;
-    mthr_ = xc->nthreads;
+  void setup(elx_param_t *conv_ep) {
+    ep = conv_ep;
+    mthr_ = ep->nthreads;
 
-    stream_in_ = xc->streaming_input
-        ? (xc->streaming_input == STORE_STREAMING)
-        : !(xc->execution_mode & FUS_MSK) ? true : false;
+    stream_in_ = ep->streaming_input
+        ? (ep->streaming_input == STORE_STREAMING)
+        : !(ep->execution_mode & FUS_MASK) ? true : false;
 
-    hA_end_ = (xc->ih + xc->tp) - (xc->ht - 1) * (A - K + 1) - 1;
-    wA_end_ = (xc->iw + xc->lp) - (xc->wt - 1) * (A - K + 1) - 1;
+    hA_end_ = (ep->ih + ep->tp) - (ep->ht - 1) * (A - K + 1) - 1;
+    wA_end_ = (ep->iw + ep->lp) - (ep->wt - 1) * (A - K + 1) - 1;
 
-    input_is_bfmt_ = xc->input_fmt == nChw16c;
-    input_as_bfmt_ = xc->input_fmt == nchw && xc->input_as_blocked;
+    input_is_bfmt_ = ep->input_fmt == nChw16c;
+    input_as_bfmt_ = ep->input_fmt == nchw && ep->input_as_blocked;
 
     bind_kernel_functions();
   }
@@ -44,7 +44,7 @@ protected:
           TKF_BLOCKED, false, I, A, V>::execute;
       ker_trans_input0_ = elk_conv_wino_trans_input<op_type, InputType,
           TKF_BLOCKED, true, I, A, V>::execute;
-    } else if (xc->input_fmt == nhwc) {
+    } else if (ep->input_fmt == nhwc) {
       ker_trans_input_ = elk_conv_wino_trans_input<op_type, InputType,
           TKF_NHWC, false, I, A, V>::execute;
       ker_trans_input0_ = elk_conv_wino_trans_input<op_type, InputType,
@@ -57,7 +57,7 @@ protected:
     }
   }
 
-  elx_conv_params_t *xc = nullptr;
+  elx_param_t *ep = nullptr;
 
   decltype(elk_conv_wino_trans_input<
       op_type, InputType, 0, false, I, A, V>::execute) *ker_trans_input_;
@@ -86,30 +86,30 @@ public:
   virtual ~elx_conv_wino_trans_input_t() {}
 
   void execute(TinputType *__restrict t_input,
-      InputType *__restrict input, int Tz, int _t2, int _ic4);
+      InputType *__restrict input, int Tz, int _t2, int _I4);
   void execute(TinputType *__restrict t_input,
-      InputType *__restrict input, int _ic4);
+      InputType *__restrict input, int _I4);
 
   void operator () (TinputType *__restrict t_input,
-      InputType *__restrict input, int Tz, int _t2, int _ic4) {
-    execute(t_input, input, Tz, _t2, _ic4);
+      InputType *__restrict input, int Tz, int _t2, int _I4) {
+    execute(t_input, input, Tz, _t2, _I4);
   }
   void operator () (TinputType *__restrict t_input,
-      InputType *__restrict input, int _ic4) {
-    execute(t_input, input, _ic4);
+      InputType *__restrict input, int _I4) {
+    execute(t_input, input, _I4);
   }
 
 protected:
   inline void __execute_blocked(TinputType *__restrict tinput,
-      InputType *__restrict input, int Tz, int _t2, int _ic4);
+      InputType *__restrict input, int Tz, int _t2, int _I4);
 
   inline void __execute_blocked(TinputType *__restrict tinput,
-      InputType *__restrict input, int _ic4);
+      InputType *__restrict input, int _I4);
 
   inline void __execute_post(TinputType * __restrict tinput,
-      op_type *at, int Tz, int _ic3, int _I2, int _T);
+      op_type *at, int Tz, int _I3, int _I2, int _T);
 
-  using super::xc;
+  using super::ep;
   using super::hA_end_;
   using super::wA_end_;
   using super::input_is_bfmt_;
@@ -120,14 +120,14 @@ protected:
   using super::mthr_;
 
   inline void __execute_nhwc(TinputType *__restrict t_input,
-      InputType *__restrict input, int Tz, int _t2, int _ic4);
+      InputType *__restrict input, int Tz, int _t2, int _I4);
   inline void __execute_nchw(TinputType *__restrict t_input,
-      InputType *__restrict input, int Tz, int _t2, int _ic4);
+      InputType *__restrict input, int Tz, int _t2, int _I4);
 
   inline void __execute_nhwc(TinputType *__restrict t_input,
-      InputType *__restrict input, int _ic4);
+      InputType *__restrict input, int _I4);
   inline void __execute_nchw(TinputType *__restrict t_input,
-      InputType *__restrict input, int _ic4);
+      InputType *__restrict input, int _I4);
 };
 
 template <typename InputType, int I, int A, int K, int V>
@@ -135,11 +135,10 @@ class elx_conv_wino_trans_input_t<uint8_t, InputType, I, A, K, V>
  : public elx_conv_wino_trans_input_base<float, InputType, I, A, K, V> {
 public:
   using TinputType = float;
-  using TscaleType = float;
   using super = elx_conv_wino_trans_input_base<float, InputType, I, A, K, V>;
 
 protected:
-  using super::xc;
+  using super::ep;
   using op_type = typename super::op_type;
   using super::hA_end_;
   using super::wA_end_;
@@ -151,50 +150,50 @@ public:
   elx_conv_wino_trans_input_t() {}
   virtual ~elx_conv_wino_trans_input_t() {}
 
-  void execute(TscaleType *__restrict tinput_quant_scale,
+  void execute(float *__restrict tinput_scale,
       uint8_t *__restrict t_input_u8,
       TinputType *__restrict t_input,
-      InputType *__restrict input, int _ic4);
+      InputType *__restrict input, int _I4);
 
-  void execute(TscaleType *__restrict tinput_quant_scale,
+  void execute(float *__restrict tinput_scale,
       uint8_t *__restrict t_input_u8,
       TinputType *__restrict t_input,
       InputType *__restrict input,
       int _t2, int Tz);
 
-  void operator() (TscaleType *__restrict tinput_quant_scale,
+  void operator() (float *__restrict tinput_scale,
       uint8_t *__restrict t_input_u8,
       TinputType *__restrict t_input,
-      InputType *__restrict input, int _ic4) {
-    execute(tinput_quant_scale, t_input_u8, t_input, input, _ic4);
+      InputType *__restrict input, int _I4) {
+    execute(tinput_scale, t_input_u8, t_input, input, _I4);
   }
 
-  void operator() (TscaleType *__restrict tinput_quant_scale,
+  void operator() (float *__restrict tinput_scale,
       uint8_t *__restrict t_input_u8,
       TinputType *__restrict t_input,
       InputType *__restrict input,
       int _t2, int Tz) {
-    execute(tinput_quant_scale, t_input_u8, t_input, input, _t2, Tz);
+    execute(tinput_scale, t_input_u8, t_input, input, _t2, Tz);
   }
 
 protected:
-  inline void __execute_blocked_nhwc(TscaleType *__restrict tinput_quant_scale,
+  inline void __execute_blocked_nhwc(float *__restrict tinput_scale,
       uint8_t *__restrict t_input_u8,
       TinputType *__restrict t_input,
-      InputType *__restrict input, int _ic4);
+      InputType *__restrict input, int _I4);
 
-  inline void __execute_nchw(TscaleType *__restrict tinput_quant_scale,
+  inline void __execute_nchw(float *__restrict tinput_scale,
       uint8_t *__restrict t_input_u8,
       TinputType *__restrict t_input,
-      InputType *__restrict input, int _ic4);
+      InputType *__restrict input, int _I4);
 
-  inline void __execute_blocked_nhwc(TscaleType *__restrict tinput_quant_scale,
+  inline void __execute_blocked_nhwc(float *__restrict tinput_scale,
       uint8_t *__restrict t_input_u8,
       TinputType *__restrict t_input,
       InputType *__restrict input,
       int _t2, int Tz);
 
-  inline void __execute_nchw(TscaleType *__restrict tinput_quant_scale,
+  inline void __execute_nchw(float *__restrict tinput_scale,
       uint8_t *__restrict t_input_u8,
       TinputType *__restrict t_input,
       InputType *__restrict input,
@@ -259,36 +258,5 @@ public:
   int anchor_t_, anchor_l_;
   int n_, t_, l_, d_, r_;
 };
-
-template class elx_conv_wino_trans_input_t<float, float, ISA_SKX_AVX512, 4, 3, 16>;
-template class elx_conv_wino_trans_input_t<float, float, ISA_SKX_AVX512, 5, 3, 16>;
-template class elx_conv_wino_trans_input_t<float, float, ISA_SKX_AVX512, 6, 3, 16>;
-template class elx_conv_wino_trans_input_t<float, float, ISA_SKX_AVX512, 7, 3, 16>;
-
-template class elx_conv_wino_trans_input_t<short, float, ISA_SKX_AVX512, 4, 3, 16>;
-template class elx_conv_wino_trans_input_t<short, float, ISA_SKX_AVX512, 5, 3, 16>;
-template class elx_conv_wino_trans_input_t<short, float, ISA_SKX_AVX512, 6, 3, 16>;
-template class elx_conv_wino_trans_input_t<short, float, ISA_SKX_AVX512, 7, 3, 16>;
-
-template class elx_conv_wino_trans_input_t<uint8_t, float, ISA_SKX_AVX512, 4, 3, 16>;
-template class elx_conv_wino_trans_input_t<uint8_t, float, ISA_SKX_AVX512, 5, 3, 16>;
-template class elx_conv_wino_trans_input_t<uint8_t, float, ISA_SKX_AVX512, 6, 3, 16>;
-template class elx_conv_wino_trans_input_t<uint8_t, float, ISA_SKX_AVX512, 7, 3, 16>;
-
-template class elx_conv_wino_trans_input_t<uint8_t, uint8_t, ISA_SKX_AVX512, 4, 3, 16>;
-template class elx_conv_wino_trans_input_t<uint8_t, uint8_t, ISA_SKX_AVX512, 5, 3, 16>;
-template class elx_conv_wino_trans_input_t<uint8_t, uint8_t, ISA_SKX_AVX512, 6, 3, 16>;
-
-#ifdef ENABLE_USER_FP16
-template class elx_conv_wino_trans_input_t<float, short, ISA_SKX_AVX512, 4, 3, 16>;
-template class elx_conv_wino_trans_input_t<float, short, ISA_SKX_AVX512, 5, 3, 16>;
-template class elx_conv_wino_trans_input_t<float, short, ISA_SKX_AVX512, 6, 3, 16>;
-template class elx_conv_wino_trans_input_t<float, short, ISA_SKX_AVX512, 7, 3, 16>;
-
-template class elx_conv_wino_trans_input_t<uint8_t, short, ISA_SKX_AVX512, 4, 3, 16>;
-template class elx_conv_wino_trans_input_t<uint8_t, short, ISA_SKX_AVX512, 5, 3, 16>;
-template class elx_conv_wino_trans_input_t<uint8_t, short, ISA_SKX_AVX512, 6, 3, 16>;
-template class elx_conv_wino_trans_input_t<uint8_t, short, ISA_SKX_AVX512, 7, 3, 16>;
-#endif
 
 }  // namespace euler

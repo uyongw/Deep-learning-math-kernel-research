@@ -6,21 +6,32 @@
 #include <cxxabi.h>
 #include <chrono>
 #include <algorithm>
+#include <stdarg.h>
 #include "el_mdarray.hpp"
 #include "el_def.hpp"
+#include "el_log.hpp"
 #include "euler.hpp"
 
-#define _T(x) x
-typedef std::chrono::high_resolution_clock Time;
-typedef std::chrono::duration<float, std::milli> Duration;
-typedef short float16;
+// Compiler
+#define __GCC_COMPILER (__GNUC__ && !__INTEL_COMPILER && !__clang__)
+#define __ICC_COMPILER __INTEL_COMPILER
+#define __CLANG_COMPILER __clang__
 
-#define __tstart(n) _T(Time::time_point __s##n = Time::now());
-#define __tend(n)                                                              \
-  _T(Time::time_point __e##n = Time::now());                                   \
-  _T(printf("time: %s, th=%d, %.2f ms\n", #n, el_get_thread_num(),            \
-      Duration(__e##n - __s##n).count()));
+// Loop unrolling
+#if __ICC_COMPILER
+#define ENABLE_AVX512F() _allow_cpu_features(_FEATURE_AVX512F)
+#define pragma_opt_core_avx512                                                 \
+  _Pragma("optimization_parameter target_arch=CORE-AVX512")
+#define pragma_unroll _Pragma("unroll")
+#define pragma_inline _Pragma("forceinline recursive")
+#else
+#define ENABLE_AVX512F() // -mavx512f
+#define pragma_opt_core_avx512
+#define pragma_unroll
+#define pragma_inline
+#endif
 
+// Loop
 #define iter_each(indx, lim) for (int indx = 0; indx < (lim); ++indx)
 #define revs_each(indx, lim) for (int indx = lim -1; indx >=0; -- indx)
 #define unroll_auto(indx, lim)                                                 \
@@ -30,16 +41,29 @@ typedef short float16;
 #define unroll_from_to(indx, from, to)                                         \
   _Pragma(STRINGIFY(unroll((to) - (from)))) for (int indx = (from);            \
                                                  indx < (to); ++indx)
+// Timing
+#define _(x) x
+#define __tstart(n) _(std::chrono::high_resolution_clock::time_point __s##n =  \
+                      std::chrono::high_resolution_clock::now());
+#define __tend(n)                                                              \
+  _(std::chrono::high_resolution_clock::time_point __e##n =                    \
+    std::chrono::high_resolution_clock::now());                                \
+  _(el_log(__DEBUG, "time: %s, th=%d, %.2f ms", #n,                            \
+           estl::current_thread_index(),                                       \
+           std::chrono::duration<float, std::milli>(__e##n - __s##n).count()));
 
-#define MEMALIGN64(ptr, size) posix_memalign((void **)(ptr), 64, size)
-
+// misc.
+#define STRINGIFY(x) #x
+#define XSTRINGIFY(x) STRINGIFY(x)
 // Note: 'align' must be power of 2
 #define ALIGNUP(value, align) (((value) + (align) - 1) & ~((align) - 1))
 
-#define SET_EPI32(s)                                                           \
-  const __i<V> vindex = _mm<V>::set_epi32(15 * (s), 14 * (s), 13 * (s),        \
-      12 * (s), 11 * (s), 10 * (s), 9 * (s), 8 * (s), 7 * (s), 6 * (s),        \
-      5 * (s), 4 * (s), 3 * (s), 2 * (s), (s), 0);
+// For gather/scatter index initialization
+#define SET_VINDEX_16(stride)                                                  \
+  15 * (stride), 14 * (stride), 13 * (stride), 12 * (stride),                  \
+  11 * (stride), 10 * (stride),  9 * (stride),  8 * (stride),                  \
+   7 * (stride),  6 * (stride),  5 * (stride),  4 * (stride),                  \
+   3 * (stride),  2 * (stride),  1 * (stride),  0
 
 namespace euler {
 
@@ -47,90 +71,35 @@ static inline size_t alignup(size_t v, size_t a) {
   return (v + a - 1) & ~(a - 1);
 }
 
-// convolution attributes indexes
-enum {
-  bias_idx = 0x1,         // with bias
-  relu_idx = 0x2,         // fuse with relu
-  ip_sum_idx = 0x4,       // fuse with in-place sum
-  op_sum_idx = 0x8,       // fuse with out-of-place sum
-  r_output_idx = 0x10,    // clear output
-  s_output_idx = 0x20,    // streaming output
-  c_output_idx = 0x40,    // convert and restore output for int8 gemm
-  has_Ir_idx = 0x100,     // has Ir
-  has_Or_idx = 0x200,     // has_Or
-  fma_opt_idx = 0x400,    // fma optimization
-};
-
-inline int set_attr(int attr, int index) {
-  return attr | index;
+template <typename T>
+static inline int memalign64(T **ptr, size_t size) {
+  return posix_memalign((void **)ptr, 64, size);
 }
 
-inline bool get_attr(int attr, int index) {
-  return (attr & index) != 0;
+static inline uint32_t set_bit(const uint32_t v, const uint32_t mask) {
+  return v | mask;
 }
 
-inline void el_error(const char *msg) {
-  printf("Euler:Error: %s\n", msg);
-  abort();
+static inline bool test_bit(const uint32_t v, const uint32_t mask) {
+  return v & mask;
 }
 
-inline void el_warn(const char *msg) {
-  printf("Euler:Warning: %s\n", msg);
+static inline uint32_t clear_bit(const uint32_t v, const uint32_t mask) {
+  return v & ~mask;
 }
 
-union Fp32
-{
-  uint32_t u;
-  float f;
-};
-
-static inline float half_2_float(uint16_t value)
-{
-  Fp32 out;
-  const Fp32 magic = { (254U - 15U) << 23 };
-  const Fp32 was_infnan = { (127U + 16U) << 23 };
-
-  out.u = (value & 0x7FFFU) << 13;   /* exponent/mantissa bits */
-  out.f *= magic.f;                  /* exponent adjust */
-  if (out.f >= was_infnan.f)         /* make sure Inf/NaN survive */
-  {
-    out.u |= 255U << 23;
+static inline const char *log_severity_to_string(int severity) {
+  switch (severity) {
+  case __TRACE: return "trace";
+  case __DEBUG: return "debug";
+  case __INFO: return "info";
+  case __WARN: return "warn";
+  case __ERROR: return "error";
+  case __FATAL: return "fatal";
+  case __PERF_TRACE: return "perf";
+  default: return "log-severity-unknown";
   }
-  out.u |= (value & 0x8000U) << 16;  /* sign bit */
-
-  return out.f;
-}
-
-static inline uint16_t float_2_half(float value)
-{
-  const Fp32 f32infty = { 255U << 23 };
-  const Fp32 f16infty = { 31U << 23 };
-  const Fp32 magic = { 15U << 23 };
-  const uint32_t sign_mask = 0x80000000U;
-  const uint32_t round_mask = ~0xFFFU;
-
-  Fp32 in;
-  uint16_t out;
-
-  in.f = value;
-  uint32_t sign = in.u & sign_mask;
-  in.u ^= sign;
-
-  if (in.u >= f32infty.u) { /* Inf or NaN (all exponent bits set) */
-      out = (in.u > f32infty.u) ? 0x7FFFU : 0x7C00U;
-  } else { /* (De)normalized number or zero */
-    in.u &= round_mask;
-    in.f *= magic.f;
-    in.u -= round_mask;
-    if (in.u > f16infty.u) {
-        in.u = f16infty.u; /* Clamp to signed infinity if overflowed */
-    }
-
-    out = uint16_t(in.u >> 13); /* Take the bits! */
-  }
-  out = uint16_t(out | (sign >> 16));
-
-  return out;
+  return "unknown";
 }
 
 static inline const char *format_to_string(int fmt) {
@@ -147,7 +116,7 @@ static inline const char *format_to_string(int fmt) {
     case ghwio: return "ghwio";
     case gOIhw16i16o: return "gOIhw16i16o";
     case gOIhw8i8o: return "gOIhw8i8o";
-    default: return "unknown"; break;
+    default: return "format-unknown";
   }
   return "unknown";
 }
@@ -159,7 +128,7 @@ static inline const char *algorithm_to_string(int alg) {
     case CONV_DIRECT_VMG: return "direct_conv_vmg";
     case CONV_WINOGRAD: return "winograd_conv";
     case DECONV_DIRECT: return "deconv";
-    default: return "unknown"; break;
+    default: return "algorithm-unknown";
   }
   return "unknown";
 }
@@ -171,7 +140,7 @@ static inline const char *datatype_to_string(int dt) {
     case u8: return "u8";
     case s8: return "s8";
     case s32: return "s32";
-    default: return "unknown";
+    default: return "datatype-unknown";
   }
   return "unknown";
 }
@@ -180,7 +149,7 @@ static inline const char *mt_runtime_to_string(int t) {
   switch (t) {
     case MT_RUNTIME_TBB: return "TBB";
     case MT_RUNTIME_OMP: return "OMP";
-    default: return "unknown";
+    default: return "mt-runtime-unknown";
   }
   return "unknown";
 }

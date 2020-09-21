@@ -13,7 +13,7 @@ namespace euler {
   _mm<V>::store_ps(&md3(atinput, 0, n, 0), t0##n);                             \
   t1##n = ((z17_5 * c4 + (c5 - c6)) - (z17_10 * c3 - (c1 - c2)));              \
   _mm<V>::store_ps(&md3(atinput, 1, n, 0), t1##n);                             \
-  t2##n = -(((z1_2 * c1 - c3) - (z1_4 * c2 - c4)) + (z2 * c5 + c6));           \
+  t2##n = -(((z1_2 * c1 - c3) + (z1_4 * c2 - c4)) + (z2 * c5 + c6));           \
   _mm<V>::store_ps(&md3(atinput, 2, n, 0), t2##n);                             \
   t3##n = (((z1_2 * c1 - c3) - (z1_4 * c2 - c4)) + (z2 * c5 - c6));            \
   _mm<V>::store_ps(&md3(atinput, 3, n, 0), t3##n);                             \
@@ -25,10 +25,10 @@ namespace euler {
 template <typename InputType, int format, bool is_border,
     int V>
 struct elk_conv_wino_trans_input<float, InputType, format, is_border,
-    ISA_SKX_AVX512, 7, V> {
+    ISA_AVX512, 7, V> {
   constexpr static int A = 7;
 
-  static void execute(elx_conv_params_t &xc, float *tinput,
+  static void execute(elx_param_t &ep, float *tinput,
       InputType *input, int hA_start, int hA_end, int wA_start, int wA_end)
   {
     ENABLE_AVX512F();
@@ -48,19 +48,19 @@ struct elk_conv_wino_trans_input<float, InputType, format, is_border,
         t60, t61, t62, t63, t64, t65, t66;
 
     __m<V> z0 = _mm<V>::setzero_ps();
-    __m<V> z2 = _mm<V>::set_ps(IMM_BCAST16(2.0f));
-    __m<V> z4 = _mm<V>::set_ps(IMM_BCAST16(4.0f));
-    __m<V> z1_2 = _mm<V>::set_ps(IMM_BCAST16(1.0f / 2.0f));
-    __m<V> z1_4 = _mm<V>::set_ps(IMM_BCAST16(1.0f / 4.0f));
-    __m<V> z5_2 = _mm<V>::set_ps(IMM_BCAST16(5.0f / 2.0f));
-    __m<V> z5_4 = _mm<V>::set_ps(IMM_BCAST16(5.0f / 4.0f));
-    __m<V> z17_4 = _mm<V>::set_ps(IMM_BCAST16(17.0f / 4.0f));
-    __m<V> z17_5 = _mm<V>::set_ps(IMM_BCAST16(17.0f / 5.0f));
-    __m<V> z17_10 = _mm<V>::set_ps(IMM_BCAST16(17.0f / 10.0f));
-    __m<V> z21_4 = _mm<V>::set_ps(IMM_BCAST16(21.0f / 4.0f));
-    __m<V> z21_10 = _mm<V>::set_ps(IMM_BCAST16(21.0f / 10.0f));
-    __m<V> z85_8 = _mm<V>::set_ps(IMM_BCAST16(85.0f / 8.0f));
-    __m<V> z85_16 = _mm<V>::set_ps(IMM_BCAST16(85.0f / 16.0f));
+    __m<V> z2 = _mm<V>::set1_ps(2.0f);
+    __m<V> z4 = _mm<V>::set1_ps(4.0f);
+    __m<V> z1_2 = _mm<V>::set1_ps(1.0f / 2.0f);
+    __m<V> z1_4 = _mm<V>::set1_ps(1.0f / 4.0f);
+    __m<V> z5_2 = _mm<V>::set1_ps(5.0f / 2.0f);
+    __m<V> z5_4 = _mm<V>::set1_ps(5.0f / 4.0f);
+    __m<V> z17_4 = _mm<V>::set1_ps(17.0f / 4.0f);
+    __m<V> z17_5 = _mm<V>::set1_ps(17.0f / 5.0f);
+    __m<V> z17_10 = _mm<V>::set1_ps(17.0f / 10.0f);
+    __m<V> z21_4 = _mm<V>::set1_ps(21.0f / 4.0f);
+    __m<V> z21_10 = _mm<V>::set1_ps(21.0f / 10.0f);
+    __m<V> z85_8 = _mm<V>::set1_ps(85.0f / 8.0f);
+    __m<V> z85_16 = _mm<V>::set1_ps(85.0f / 16.0f);
 
     auto readin = [&](int _h, int _w) {
       if (format == TKF_COMPACT) {
@@ -72,7 +72,7 @@ struct elk_conv_wino_trans_input<float, InputType, format, is_border,
           return _mm<V>::cvtph_ps(f16);
         }
       } else if (format == TKF_BLOCKED) {
-        MD3(InputType, ainput, input, xc.ih, xc.iw, V);
+        MD3(InputType, ainput, input, ep.ih, ep.iw, V);
         if (is_border
             && (_h < hA_start || _w < wA_start || _h > hA_end || _w > wA_end))
           return z0;
@@ -83,10 +83,10 @@ struct elk_conv_wino_trans_input<float, InputType, format, is_border,
           return _mm<V>::cvtph_ps(f16);
         }
       } else { // TKF_NHWC
-        MD3(InputType, ainput0, input, xc.ih, xc.iw, xc.ic);
+        MD3(InputType, ainput0, input, ep.ih, ep.iw, ep.ic);
         // TODO: overflow on last V
         MD2(InputType, ainput1, &md3(ainput0, _h, _w, 0),
-            xc.ic4 * xc.ic3 * xc.I2, V);
+            ep.I4 * ep.I3 * ep.I2, V);
         if (is_border
             && (_h < hA_start || _w < wA_start || _h > hA_end || _w > wA_end))
           return z0;
@@ -129,12 +129,12 @@ struct elk_conv_wino_trans_input<float, InputType, format, is_border,
     t61 = (((z21_4 * c5 - (f60 - f61)) + (z17_4 * (f62 - f63) - (f64 - f65))) - (z21_10 * c3 - c1));
     _mm<V>::store_ps(&md3(atinput, 6, 1, 0), t61);
 
-    __m<V> z5 = _mm<V>::set_ps(IMM_BCAST16(5.0f));
-    __m<V> z5_8 = _mm<V>::set_ps(IMM_BCAST16(5.0f / 8.0f));
-    __m<V> z5_16 = _mm<V>::set_ps(IMM_BCAST16(5.0f / 16.0f));
-    __m<V> z25_4 = _mm<V>::set_ps(IMM_BCAST16(25.0f / 4.0f));
-    __m<V> z25_8 = _mm<V>::set_ps(IMM_BCAST16(25.0f / 8.0f));
-    __m<V> z25_16 = _mm<V>::set_ps(IMM_BCAST16(25.0f / 16.0f));
+    __m<V> z5 = _mm<V>::set1_ps(5.0f);
+    __m<V> z5_8 = _mm<V>::set1_ps(5.0f / 8.0f);
+    __m<V> z5_16 = _mm<V>::set1_ps(5.0f / 16.0f);
+    __m<V> z25_4 = _mm<V>::set1_ps(25.0f / 4.0f);
+    __m<V> z25_8 = _mm<V>::set1_ps(25.0f / 8.0f);
+    __m<V> z25_16 = _mm<V>::set1_ps(25.0f / 16.0f);
 
     c1 = (z5_2 * f02 + (z5_4 * f03 - (z1_2 * f00 + (z1_4 * f01 + (z2 * f04 + f05)))));
     c2 = (z5_2 * f12 + (z5_4 * f13 - (z1_2 * f10 + (z1_4 * f11 + (z2 * f14 + f15)))));
@@ -156,8 +156,8 @@ struct elk_conv_wino_trans_input<float, InputType, format, is_border,
     t63 = (z21_4 * c5 + (z1_4 * f61 + (z5_2 * f62 - (z21_10 * c3 + (z1_2 * f60 + (z5_4 * f63 + (z2 * f64 - (c1 + f65))))))));
     _mm<V>::store_ps(&md3(atinput, 6, 3, 0), t63);
 
-    __m<V> z10 = _mm<V>::set_ps(IMM_BCAST16(10.0f));
-    __m<V> z25_2 = _mm<V>::set_ps(IMM_BCAST16(25.0f / 2.0f));
+    __m<V> z10 = _mm<V>::set1_ps(10.0f);
+    __m<V> z25_2 = _mm<V>::set1_ps(25.0f / 2.0f);
 
     c1 = (z5_2 * f02 + (z5 * f03 - (z2 * f00 + (z4 * f01 + (z1_2 * f04 + f05)))));
     c2 = (z5_2 * f12 + (z5 * f13 - (z2 * f10 + (z4 * f11 + (z1_2 * f14 + f15)))));
@@ -186,8 +186,8 @@ struct elk_conv_wino_trans_input<float, InputType, format, is_border,
     f46 = readin(4, 6);
     f56 = readin(5, 6);
     f66 = readin(6, 6);
-    __m<V> z105_8 = _mm<V>::set_ps(IMM_BCAST16(105.0f / 8.0f));
-    __m<V> z105_16 = _mm<V>::set_ps(IMM_BCAST16(105.0f / 16.0f));
+    __m<V> z105_8 = _mm<V>::set1_ps(105.0f / 8.0f);
+    __m<V> z105_16 = _mm<V>::set1_ps(105.0f / 16.0f);
 
     c1 = (z21_4 * (f04 - f02) + (f00 - f06));
     c2 = (z21_4 * (f14 - f12) + (f10 - f16));

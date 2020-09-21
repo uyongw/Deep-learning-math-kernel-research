@@ -6,7 +6,7 @@
 #include "el_utils.hpp"
 #include "el_allocator.hpp"
 #include "elx_conv.hpp"
-#include "kernel/elk_conv_otj_binder.hxx"
+#include "kernel/elk_conv_binder.hxx"
 
 namespace euler {
 
@@ -39,14 +39,14 @@ Template_elx_deconv_direct_t class elx_deconv_direct_t : public elx_conv_t {
 
   void trans_weights_to_compact(TweightsType *tweights, WeightsType *weights);
   inline void __trans_weights_post(WeightsType *aweights, TweightsType *tweights,
-      int _g, int _oc4, int _ic4, int _oc3, int _ic3, int _kh, int _kw, int _O1,
+      int _g, int _O4, int _I4, int _O3, int _I3, int _kh, int _kw, int _O1,
       int _I2, int _iV, int _O);
   inline void __trans_weights_Or_post(WeightsType *aweights, TweightsType *tweights,
-      int _g, int _oc4, int _ic4, int _oc3, int _ic3, int _kh, int _kw, int _O1,
+      int _g, int _O4, int _I4, int _O3, int _I3, int _kh, int _kw, int _O1,
       int _I2, int _iV, int _O);
 
   void conv_a060(OutputType *output, InputType *input, TweightsType *weights,
-      BiasType *bias, int _ic4, int _oc4, int _ht, int _wt);
+      BiasType *bias, int _I4, int _O4, int _ht, int _wt);
 
   void set_workspace_buffers(void *base);
   void set_scratch_buffers(void *base);
@@ -72,9 +72,6 @@ Template_elx_deconv_direct_t class elx_deconv_direct_t : public elx_conv_t {
   int attr_;
   int mthr_;
 };
-
-// fp32-f32f32f32
-template class elx_deconv_direct_t<conv::FP32, conv_impl::FP32, 16, ISA_SKX_AVX512>;
 
 } // namespace euler
 #endif // __ELX_DECONV_DIRECT_HPP__

@@ -20,12 +20,12 @@ public:
 
   elx_conv_wino_trans_weights_base() {}
   virtual ~elx_conv_wino_trans_weights_base() {}
-  void setup(elx_conv_params_t *xc) {
-    this->xc = xc;
-    mthr_ = xc->nthreads;
+  void setup(elx_param_t *conv_ep) {
+    ep = conv_ep;
+    mthr_ = ep->nthreads;
 
-    weights_is_bfmt_ = xc->weights_fmt == OIhw16i16o;
-    weights_as_bfmt_ = xc->input_fmt == oihw && xc->weights_as_blocked;
+    weights_is_bfmt_ = ep->weights_fmt == OIhw16i16o;
+    weights_as_bfmt_ = ep->input_fmt == oihw && ep->weights_as_blocked;
 
     bind_kernel_functions();
   }
@@ -36,28 +36,28 @@ protected:
                        WeightsType, I, A, K, V>::execute;
   }
 
-  elx_conv_params_t *xc = nullptr;
+  elx_param_t *ep = nullptr;
 
   decltype(elk_conv_wino_trans_weights<
       op_type, WeightsType, I, A, K, V>::execute) *ker_trans_weights_;
 
   inline void __execute_blocked(TweightsType *__restrict tweights,
-      WeightsType *__restrict weights, int oc4);
+      WeightsType *__restrict weights, int O4);
   inline void __execute_oihw(TweightsType *__restrict tweights,
-      WeightsType *__restrict weights, int oc4);
+      WeightsType *__restrict weights, int O4);
   inline void __execute_hwio(TweightsType *__restrict tweights,
-      WeightsType *__restrict weights, int oc4);
+      WeightsType *__restrict weights, int O4);
 
   inline void __execute_blocked(TweightsType *__restrict tweights,
-      WeightsType *__restrict weights, int _ic4, int _oc4);
+      WeightsType *__restrict weights, int _I4, int _O4);
   inline void __execute_oihw(TweightsType *__restrict tweights,
-      WeightsType *__restrict weights, int _ic4, int _oc4);
+      WeightsType *__restrict weights, int _I4, int _O4);
   inline void __execute_hwio(TweightsType *__restrict tweights,
-      WeightsType *__restrict weights, int _ic4, int _oc4);
+      WeightsType *__restrict weights, int _I4, int _O4);
 
   inline void __execute_post(TweightsType * __restrict tweights,
       op_type at[A][A][V][V],
-      int _oc4, int _ic4, int _oc3, int _ic3,
+      int _O4, int _I4, int _O3, int _I3,
       int _O1, int _I2, int _O);
 
   bool weights_is_bfmt_, weights_as_bfmt_;
@@ -77,21 +77,21 @@ public:
   virtual ~elx_conv_wino_trans_weights_t() {}
 
   void execute(TweightsType *__restrict tweights,
-      WeightsType *__restrict weights, int oc4 = 1);
+      WeightsType *__restrict weights, int O4 = 1);
   void execute(TweightsType *__restrict tweights,
-      WeightsType *__restrict weights, int _ic4, int _oc4);
+      WeightsType *__restrict weights, int _I4, int _O4);
 
   void operator () (TweightsType *__restrict tweights,
-      WeightsType *__restrict weights, int oc4 = 1) {
-    execute(tweights, weights, oc4);
+      WeightsType *__restrict weights, int O4 = 1) {
+    execute(tweights, weights, O4);
   }
   void operator() (TweightsType *__restrict tweights,
-      WeightsType *__restrict weights, int _ic4, int _oc4) {
-    execute(tweights, weights, _ic4, _oc4);
+      WeightsType *__restrict weights, int _I4, int _O4) {
+    execute(tweights, weights, _I4, _O4);
   }
 
 protected:
-  using super::xc;
+  using super::ep;
   using super::ker_trans_weights_;
   using super::weights_is_bfmt_;
   using super::weights_as_bfmt_;
@@ -103,7 +103,6 @@ class elx_conv_wino_trans_weights_t<int8_t, WeightsType, I, A, K, V>
  : public elx_conv_wino_trans_weights_base<float, WeightsType, I, A, K, V> {
 public:
   using TweightsType = float;
-  using TscaleType = float;
   using super = elx_conv_wino_trans_weights_base<float, WeightsType, I, A, K, V>;
   using op_type = typename super::op_type;
 
@@ -111,64 +110,32 @@ public:
   elx_conv_wino_trans_weights_t() {}
   virtual ~elx_conv_wino_trans_weights_t() {}
 
-  void execute(TscaleType *__restrict tweights_quant_scale,
-      TscaleType *__restrict tweights_factor,
+  void execute(float *__restrict tweights_scale,
+      float *__restrict tweights_shift,
       int8_t *__restrict t_input_s8,
       TweightsType *__restrict t_input,
-      WeightsType *__restrict input, int oc4);
+      WeightsType *__restrict input, int O4);
 
-  void operator () (TscaleType *__restrict tweights_quant_scale,
-      TscaleType *__restrict tweights_factor,
+  void operator () (float *__restrict tweights_scale,
+      float *__restrict tweights_shift,
       int8_t *__restrict t_input_s8,
       TweightsType *__restrict t_input,
-      WeightsType *__restrict input, int oc4) {
-    execute(tweights_quant_scale, tweights_factor,
-        t_input_s8, t_input, input, oc4);
+      WeightsType *__restrict input, int O4) {
+    execute(tweights_scale, tweights_shift,
+        t_input_s8, t_input, input, O4);
   }
 
-  inline void quantization(TscaleType *__restrict tweights_quant_scale,
-    TscaleType *__restrict tweights_quant_factor,
+  inline void quantization(float *__restrict tweights_scale,
+    float *__restrict tweights_shift,
     int8_t *__restrict tweights_s8,
-    TweightsType *__restrict tweights, int oc4);
+    TweightsType *__restrict tweights, int O4);
 
 protected:
-  using super::xc;
+  using super::ep;
   using super::ker_trans_weights_;
   using super::weights_is_bfmt_;
   using super::weights_as_bfmt_;
   using super::mthr_;
 };
-
-template class elx_conv_wino_trans_weights_t<float, float, ISA_SKX_AVX512, 4, 3, 16>;
-template class elx_conv_wino_trans_weights_t<float, float, ISA_SKX_AVX512, 5, 3, 16>;
-template class elx_conv_wino_trans_weights_t<float, float, ISA_SKX_AVX512, 6, 3, 16>;
-template class elx_conv_wino_trans_weights_t<float, float, ISA_SKX_AVX512, 7, 3, 16>;
-
-template class elx_conv_wino_trans_weights_t<short, float, ISA_SKX_AVX512, 4, 3, 16>;
-template class elx_conv_wino_trans_weights_t<short, float, ISA_SKX_AVX512, 5, 3, 16>;
-template class elx_conv_wino_trans_weights_t<short, float, ISA_SKX_AVX512, 6, 3, 16>;
-template class elx_conv_wino_trans_weights_t<short, float, ISA_SKX_AVX512, 7, 3, 16>;
-
-template class elx_conv_wino_trans_weights_t<int8_t, float, ISA_SKX_AVX512, 4, 3, 16>;
-template class elx_conv_wino_trans_weights_t<int8_t, float, ISA_SKX_AVX512, 5, 3, 16>;
-template class elx_conv_wino_trans_weights_t<int8_t, float, ISA_SKX_AVX512, 6, 3, 16>;
-template class elx_conv_wino_trans_weights_t<int8_t, float, ISA_SKX_AVX512, 7, 3, 16>;
-
-#ifdef ENABLE_USER_FP16
-template class elx_conv_wino_trans_weights_t<float, short, ISA_SKX_AVX512, 4, 3, 16>;
-template class elx_conv_wino_trans_weights_t<float, short, ISA_SKX_AVX512, 5, 3, 16>;
-template class elx_conv_wino_trans_weights_t<float, short, ISA_SKX_AVX512, 6, 3, 16>;
-template class elx_conv_wino_trans_weights_t<float, short, ISA_SKX_AVX512, 7, 3, 16>;
-
-template class elx_conv_wino_trans_weights_t<short, short, ISA_SKX_AVX512, 4, 3, 16>;
-template class elx_conv_wino_trans_weights_t<short, short, ISA_SKX_AVX512, 5, 3, 16>;
-template class elx_conv_wino_trans_weights_t<short, short, ISA_SKX_AVX512, 6, 3, 16>;
-template class elx_conv_wino_trans_weights_t<short, short, ISA_SKX_AVX512, 7, 3, 16>;
-
-template class elx_conv_wino_trans_weights_t<int8_t, short, ISA_SKX_AVX512, 4, 3, 16>;
-template class elx_conv_wino_trans_weights_t<int8_t, short, ISA_SKX_AVX512, 5, 3, 16>;
-template class elx_conv_wino_trans_weights_t<int8_t, short, ISA_SKX_AVX512, 6, 3, 16>;
-template class elx_conv_wino_trans_weights_t<int8_t, short, ISA_SKX_AVX512, 7, 3, 16>;
-#endif
 
 }  // namespace euler

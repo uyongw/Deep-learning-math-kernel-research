@@ -20,9 +20,9 @@ public:
     fd_ = open(key, O_CREAT | O_RDWR, 0644);
     int rc = flock(fd_, LOCK_EX); // blocking
     if (rc) {
-      printf("Euler: process_singleton: flock failed: key=%s\n", key);
+      el_log(__INFO, "process_singleton: flock failed: key=%s", key_);
     } else {
-      printf("Euler: process_singleton: flock success: key=%s\n", key);
+      el_log(__INFO, "process_singleton: flock success: key=%s", key_);
     }
   }
 
@@ -60,7 +60,7 @@ struct galloc {
     size_t sz = ALIGNUP(size, 64);
     if (sz > sz_) {
       if (ptr_) ::free(ptr_);
-      MEMALIGN64(&ptr_, sz);
+      memalign64(&ptr_, sz);
       sz_ = sz;
     }
     ++ref_cnt();
@@ -102,7 +102,7 @@ struct walloc {
     auto &ptr_ = get();
     auto &cnt_ = ref_cnt();
     if (ptr_ == nullptr) {
-      MEMALIGN64(&ptr_, WS_BLOCK_SIZE);
+      memalign64(&ptr_, WS_BLOCK_SIZE);
     }
     auto sz = ALIGNUP(size, 64);
     auto old_sz = sz_;
@@ -113,7 +113,7 @@ struct walloc {
       return (char *)ptr_ + old_sz;
     } else {
       void *p = nullptr;
-      MEMALIGN64(&p, sz);
+      memalign64(&p, sz);
       return p;
     }
   }
@@ -199,7 +199,7 @@ struct shwalloc {
       return (char *)ptr_ + old_sz + hdr_size;
     } else {
       void *p = nullptr;
-      MEMALIGN64(&p, sz);
+      memalign64(&p, sz);
       return p;
     }
   }

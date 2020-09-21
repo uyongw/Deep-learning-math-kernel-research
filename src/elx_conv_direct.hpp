@@ -6,8 +6,8 @@
 #include "el_utils.hpp"
 #include "el_allocator.hpp"
 #include "elx_conv.hpp"
-#include "kernel/elk_gemm_otj_binder.hxx"
-#include "kernel/elk_conv_otj_binder.hxx"
+#include "kernel/elk_gemm_binder.hxx"
+#include "kernel/elk_conv_binder.hxx"
 
 namespace euler {
 
@@ -35,27 +35,27 @@ Template_elx_conv_direct_t class elx_conv_direct_t : public elx_conv_t {
   virtual void execute(void *output, void *input, void *weights, void *bias);
 
   private:
+  void __execute_c060(OutputType *output, InputType *input,
+      WeightsType *weights, BiasType *bias);
+  void __execute_c070(OutputType *output, InputType *input,
+      WeightsType *weights, BiasType *bias);
   void __execute_a060(OutputType *output, InputType *input,
-      WeightsType *weights, BiasType *bias);
-  void __execute_b060(OutputType *output, InputType *input,
-      WeightsType *weights, BiasType *bias);
-  void __execute_d060(OutputType *output, InputType *input,
       WeightsType *weights, BiasType *bias);
 
   void trans_weights_to_compact(TweightsType *tweights, WeightsType *weights);
   inline void __trans_weights_post(WeightsType *aweights, TweightsType *tweights,
-      int _g, int _oc4, int _ic4, int _oc3, int _ic3, int _kh, int _kw, int _O1,
+      int _g, int _O4, int _I4, int _O3, int _I3, int _kh, int _kw, int _O1,
       int _I2, int _iV, int _O);
   inline void __trans_weights_Or_post(WeightsType *aweights, TweightsType *tweights,
-      int _g, int _oc4, int _ic4, int _oc3, int _ic3, int _kh, int _kw, int _O1,
+      int _g, int _O4, int _I4, int _O3, int _I3, int _kh, int _kw, int _O1,
       int _I2, int _iV, int _O);
 
-  void conv_a060(OutputType *output, InputType *input, TweightsType *weights,
-      BiasType *bias, int _ic4, int _oc4, int _ht, int _wt);
-  void conv_b060(OutputType *output, InputType *input, TweightsType *weights,
-      BiasType *bias, int _ic4, int _ic3, int _oc4, int _ht, int _wt);
-  void gemm_d060(OutputType *toutput, InputType *tinput, TweightsType *tweights,
-      BiasType *bias, int _ic4, int _oc4, int _ht, int _wt);
+  void conv_c060(OutputType *output, InputType *input, TweightsType *weights,
+      BiasType *bias, int _I4, int _O4, int _ht, int _wt);
+  void conv_c070(OutputType *output, InputType *input, TweightsType *weights,
+      BiasType *bias, int _I4, int _I3, int _O4, int _ht, int _wt);
+  void gemm_a060(OutputType *toutput, InputType *tinput, TweightsType *tweights,
+      BiasType *bias, int _I4, int _O4, int _ht, int _wt);
 
   void set_workspace_buffers(void *base);
   void set_scratch_buffers(void *base);
@@ -81,16 +81,6 @@ Template_elx_conv_direct_t class elx_conv_direct_t : public elx_conv_t {
   int attr_;
   int mthr_;
 };
-
-// fp32-f32f32f32
-template class elx_conv_direct_t<conv::FP32, conv_impl::FP32, 16, ISA_SKX_AVX512>;
-// fp32-f32f16f32
-template class elx_conv_direct_t<conv::FP32, conv_impl::FP32_F16w, 16, ISA_SKX_AVX512>;
-
-#ifdef ENABLE_USER_FP16
-// fp16o-f32f32f16
-template class elx_conv_direct_t<conv::FP16O, conv_impl::FP32_F16o, 16, ISA_SKX_AVX512>;
-#endif
 
 } // namespace euler
 #endif // __ELX_CONV_DIRECT_HPP__

@@ -7,13 +7,13 @@
 #include "el_utils.hpp"
 #include "elx_conv.hpp"
 #include "elx_conv_wino.hpp"
-#include "elx_conv_wino_lp.hpp"
+#include "elx_int8_conv_wino.hpp"
 #include "elx_conv_direct_1x1.hpp"
-#include "elx_conv_direct_1x1_lp.hpp"
+#include "elx_int8_conv_direct_1x1.hpp"
 #include "elx_conv_direct.hpp"
 #include "elx_conv_direct_vmg.hpp"
-#include "elx_conv_direct_lp.hpp"
-#include "elx_conv_direct_depthwise_lp.hpp"
+#include "elx_int8_conv_direct.hpp"
+#include "elx_int8_conv_direct_depthwise.hpp"
 #include "elx_deconv_direct.hpp"
 
 namespace euler {
@@ -26,6 +26,7 @@ eld_conv_t::eld_conv_t()
   dilations = { 1, 1 };
   sizes = { 0, 0, 0, 0 };
   algorithm = CONV_DIRECT;
+  name = "ioi";
   tile_size = 0;
   with_relu = false;
   with_bias = false;
@@ -112,7 +113,7 @@ int eld_conv_t::setup(bool fully_setup)
   auto get_elem_size = [](uint8_t dtype) -> size_t {
     switch (dtype) {
     case f32: return sizeof(float);
-    case f16: return sizeof(short);
+    case f16: return sizeof(float16);
     case u8:
     case s8: return sizeof(uint8_t);
     default: return 0;
@@ -134,8 +135,7 @@ int eld_conv_t::setup(bool fully_setup)
     ow = (dims.iw + pads.l + pads.r - dims.kw) / strides.w + 1;
   }
   if (oh != dims.oh || ow != dims.ow) {
-    el_error("Padding parameter error");
-    return ELX_GENERAL_ERROR;
+    el_warn("Padding parameter error. pads.r/pads.b will be auto adjusted");
   }
 
   xc = nullptr;
@@ -166,37 +166,33 @@ int eld_conv_t::setup(bool fully_setup)
   if (algorithm == CONV_DIRECT) {
     if (user_type == user_type_f32) {
       if (f16c_opt)
-        xc = new elx_conv_direct_t<conv::FP32, conv_impl::FP32_F16w, 16, ISA_SKX_AVX512>(*this);
+        xc = new elx_conv_direct_t<conv::FP32, conv_impl::FP32_F16w, 16, ISA_AVX512>(*this);
       else
-        xc = new elx_conv_direct_t<conv::FP32, conv_impl::FP32, 16, ISA_SKX_AVX512>(*this);
+        xc = new elx_conv_direct_t<conv::FP32, conv_impl::FP32, 16, ISA_AVX512>(*this);
     } else if (user_type == user_type_u8f32u8f32) {
       if (depthwise)
-        xc = new elx_conv_direct_depthwise_lp_t<conv::U8F32U8F32, conv_impl::INT8_F32, 16, ISA_SKX_AVX512>(*this);
+        xc = new elx_int8_conv_direct_depthwise_t<conv::U8F32U8F32, conv_impl::INT8_F32, 16, ISA_AVX512>(*this);
       else
-        xc = new elx_conv_direct_lp_t<conv::U8F32U8F32, conv_impl::INT8_F32, 16, ISA_SKX_AVX512>(*this);
+        xc = new elx_int8_conv_direct_t<conv::U8F32U8F32, conv_impl::INT8_F32, 16, ISA_AVX512>(*this);
     } else if (user_type == user_type_u8f32s8f32) {
       if (depthwise)
-        xc = new elx_conv_direct_depthwise_lp_t<conv::U8F32S8F32, conv_impl::INT8_F32, 16, ISA_SKX_AVX512>(*this);
+        xc = new elx_int8_conv_direct_depthwise_t<conv::U8F32S8F32, conv_impl::INT8_F32, 16, ISA_AVX512>(*this);
       else
-        xc = new elx_conv_direct_lp_t<conv::U8F32S8F32, conv_impl::INT8_F32, 16, ISA_SKX_AVX512>(*this);
+        xc = new elx_int8_conv_direct_t<conv::U8F32S8F32, conv_impl::INT8_F32, 16, ISA_AVX512>(*this);
     } else if (user_type == user_type_u8f32f32f32) {
-        xc = new elx_conv_direct_lp_t<conv::U8F32F32F32, conv_impl::INT8_F32, 16, ISA_SKX_AVX512>(*this);
+        xc = new elx_int8_conv_direct_t<conv::U8F32F32F32, conv_impl::INT8_F32, 16, ISA_AVX512>(*this);
 #ifdef ENABLE_USER_FP16
     } else if (user_type == user_type_f16o) {
-      xc = new elx_conv_direct_t<conv::FP16O, conv_impl::FP32_F16o, 16, ISA_SKX_AVX512>(*this);
+      xc = new elx_conv_direct_t<conv::FP16O, conv_impl::FP32_F16o, 16, ISA_AVX512>(*this);
 #endif
     } else
       el_error("TODO: FP16 UserTypes for DIRECT.");
   } else if (algorithm == CONV_DIRECT_VMG) {
     if (user_type == user_type_f32) {
       if (f16c_opt)
-        xc = new elx_conv_direct_vmg_t<conv::FP32, conv_impl::FP32_F16w, 16, ISA_SKX_AVX512>(*this);
+        xc = new elx_conv_direct_vmg_t<conv::FP32, conv_impl::FP32_F16w, 16, ISA_AVX512>(*this);
       else
-        xc = new elx_conv_direct_vmg_t<conv::FP32, conv_impl::FP32, 16, ISA_SKX_AVX512>(*this);
-#ifdef ENABLE_USER_FP16
-    } else if (user_type == user_type_f16o)
-      xc = new elx_conv_direct_vmg_t<conv::FP16O, conv_impl::FP32_F16o, 16, ISA_SKX_AVX512>(*this);
-#endif
+        xc = new elx_conv_direct_vmg_t<conv::FP32, conv_impl::FP32, 16, ISA_AVX512>(*this);
     } else
       el_error("TODO: FP16 UserTypes for DIRECT_VMG.");
 
@@ -207,13 +203,13 @@ int eld_conv_t::setup(bool fully_setup)
     }
     if (user_type == user_type_f32) {
       if (f16c_opt)
-        xc = new elx_conv_direct_1x1_t<conv::FP32, conv_impl::FP32_F16w, 16, ISA_SKX_AVX512>(*this);
+        xc = new elx_conv_direct_1x1_t<conv::FP32, conv_impl::FP32_F16w, 16, ISA_AVX512>(*this);
       else
-        xc = new elx_conv_direct_1x1_t<conv::FP32, conv_impl::FP32, 16, ISA_SKX_AVX512>(*this);
+        xc = new elx_conv_direct_1x1_t<conv::FP32, conv_impl::FP32, 16, ISA_AVX512>(*this);
     } else if (user_type == user_type_u8f32u8f32) {
-        xc = new elx_conv_direct_1x1_lp_t<conv::U8F32U8F32, conv_impl::INT8_F32, 16, ISA_SKX_AVX512>(*this);
+        xc = new elx_int8_conv_direct_1x1_t<conv::U8F32U8F32, conv_impl::INT8_F32, 16, ISA_AVX512>(*this);
     } else if (user_type == user_type_u8f32s8f32) {
-        xc = new elx_conv_direct_1x1_lp_t<conv::U8F32S8F32, conv_impl::INT8_F32, 16, ISA_SKX_AVX512>(*this);
+        xc = new elx_int8_conv_direct_1x1_t<conv::U8F32S8F32, conv_impl::INT8_F32, 16, ISA_AVX512>(*this);
     } else
       el_error("TODO: FP16 UserTypes for DIRECT 1x1.");
   } else if (algorithm == CONV_WINOGRAD) {
@@ -239,78 +235,79 @@ int eld_conv_t::setup(bool fully_setup)
       tile_size = mac_per_read > MAC_PER_READ_A6_LIMIT  ? 6 : 4;
     }
 
-    #define F_5_3_OFF_CASE(UT, TT, type) \
-      case 7: break
+#define create_conv_wino(U, T)                                       \
+  switch (tile_size) {                                               \
+  case 4:                                                            \
+    xc = new elx_conv_wino_t<U, T, 4, 3, 16, ISA_AVX512>(*this);     \
+    break;                                                           \
+  case 5:                                                            \
+    xc = new elx_conv_wino_t<U, T, 5, 3, 16, ISA_AVX512>(*this);     \
+    break;                                                           \
+  case 6:                                                            \
+    xc = new elx_conv_wino_t<U, T, 6, 3, 16, ISA_AVX512>(*this);     \
+    break;                                                           \
+  case 7:                                                            \
+    xc = new elx_conv_wino_t<U, T, 7, 3, 16, ISA_AVX512>(*this);     \
+    break;                                                           \
+  default:                                                           \
+    el_error("Unimplemented tile size");                             \
+    break;                                                           \
+  }
 
-    #define F_5_3_ON_CASE(UT, TT, type) \
-      case 7: \
-        xc = new elx_conv_##type##_t<UT, TT, 7, 3, 16, \
-            ISA_SKX_AVX512>(*this); \
-        break
-
-    #define create_conv_wino(UT, TT, prefix, type) \
-      switch (tile_size) { \
-      case 4: \
-        xc = new elx_conv_##type##_t<UT, TT, 4, 3, 16, \
-            ISA_SKX_AVX512>(*this); \
-        break; \
-      case 5: \
-        xc = new elx_conv_##type##_t<UT, TT, 5, 3, 16, \
-            ISA_SKX_AVX512>(*this); \
-        break; \
-      case 6: \
-        xc = new elx_conv_##type##_t<UT, TT, 6, 3, 16, \
-            ISA_SKX_AVX512>(*this); \
-        break; \
-      prefix##_CASE(UT, TT, type); \
-      default: \
-        el_error("Unimplemented tile size"); \
-        break; \
-      }
+#define create_int8_conv_wino(U, T)                                       \
+  switch (tile_size) {                                                    \
+  case 4:                                                                 \
+    xc = new elx_int8_conv_wino_t<U, T, 4, 3, 16, ISA_AVX512>(*this);     \
+    break;                                                                \
+  case 5:                                                                 \
+    xc = new elx_int8_conv_wino_t<U, T, 5, 3, 16, ISA_AVX512>(*this);     \
+    break;                                                                \
+  case 6:                                                                 \
+    xc = new elx_int8_conv_wino_t<U, T, 6, 3, 16, ISA_AVX512>(*this);     \
+    break;                                                                \
+  default:                                                                \
+    el_error("Unimplemented tile size");                                  \
+    break;                                                                \
+  }
 
     if (!disable_autoparam) f16c_opt = true;
 
     // User int8
     if (user_type == user_type_u8f32u8f32) {
-      create_conv_wino(
-          conv::U8F32U8F32, conv_impl::INT8_F32, F_5_3_OFF, wino_lp);
+      create_int8_conv_wino(conv::U8F32U8F32, conv_impl::INT8_F32);
     } else if (user_type == user_type_u8f32s8f32) {
-      create_conv_wino(
-          conv::U8F32S8F32, conv_impl::INT8_F32, F_5_3_OFF, wino_lp);
+      create_int8_conv_wino(conv::U8F32S8F32, conv_impl::INT8_F32);
     } else if (user_type == user_type_u8f32f32f32) {
-      create_conv_wino(
-          conv::U8F32F32F32, conv_impl::INT8_F32, F_5_3_OFF, wino_lp);
+      create_int8_conv_wino(conv::U8F32F32F32, conv_impl::INT8_F32);
     } else {
       // User fp32
       if ((execution_mode & 0xF00) != 0x100) {
         // Impl. fp32
         if (f16c_opt && user_type == user_type_f32) {
-          create_conv_wino(conv::FP32, conv_impl::FP32_F16iwo, F_5_3_ON, wino);
+          create_conv_wino(conv::FP32, conv_impl::FP32_F16iwo);
 #ifdef ENABLE_USER_FP16
         } else if (user_type == user_type_f16) {
-          create_conv_wino(conv::FP16, conv_impl::FP32_F16wob, F_5_3_ON, wino);
+          create_conv_wino(conv::FP16, conv_impl::FP32_F16wob);
 #endif
         } else if (user_type != user_type_f16o) {
-          create_conv_wino(conv::FP32, conv_impl::FP32, F_5_3_ON, wino);
+          create_conv_wino(conv::FP32, conv_impl::FP32);
         }
       } else {
         // Impl. int8
         if (f16c_opt && user_type == user_type_f32) {
-          create_conv_wino(
-              conv::FP32, conv_impl::INT8_F16o, F_5_3_OFF, wino_lp);
+          create_int8_conv_wino(conv::FP32, conv_impl::INT8_F16o);
 #ifdef ENABLE_USER_FP16
         } else if (user_type == user_type_f16) {
-          create_conv_wino(
-              conv::FP16, conv_impl::INT8_F16b, F_5_3_OFF, wino_lp);
+          create_int8_conv_wino(conv::FP16, conv_impl::INT8_F16b);
 #endif
         } else if (user_type != user_type_f16o) {
-          create_conv_wino(conv::FP32, conv_impl::INT8_F32, F_5_3_ON, wino_lp);
+          create_int8_conv_wino(conv::FP32, conv_impl::INT8_F32);
         }
       }
     }
   } else if (algorithm == DECONV_DIRECT) {
     if (user_type == user_type_f32) {
-      xc = new elx_deconv_direct_t<conv::FP32, conv_impl::FP32, 16, ISA_SKX_AVX512>(*this);
+      xc = new elx_deconv_direct_t<conv::FP32, conv_impl::FP32, 16, ISA_AVX512>(*this);
     } else
       el_error("TODO: FP16 UserTypes for DECONV_DIRECT.");
   }

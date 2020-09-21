@@ -38,16 +38,6 @@ Template_elx_conv_wino_t
 class elx_conv_wino_t : public elx_conv_t {
 public:
   // Configurable parameters
-  using elx_conv_t::IC;
-  using elx_conv_t::OC;
-  using elx_conv_t::T;
-  using elx_conv_t::I2;
-  using elx_conv_t::O2;
-  using elx_conv_t::oc4;
-  using elx_conv_t::ic3;
-  using elx_conv_t::oc3;
-  using elx_conv_t::V1;
-  using elx_conv_t::Vx;
   using InputType = typename UserTypes::InputType;
   using WeightsType = typename UserTypes::WeightsType;
   using OutputType = typename UserTypes::OutputType;
@@ -59,7 +49,6 @@ public:
   using TinputType = typename TarrayTypes::InputType;
   using TweightsType = typename TarrayTypes::WeightsType;
   using ToutputType = typename TarrayTypes::OutputType;
-  using TscaleType = typename TarrayTypes::ScaleType;
 
   constexpr static bool is_border = true;
   constexpr static bool has_bias = true;
@@ -83,10 +72,6 @@ private:
   void __execute_a071(OutputType *output, InputType *input,
       WeightsType *weights, BiasType *bias);
   void __execute_a073(OutputType *output, InputType *input,
-      WeightsType *weights, BiasType *bias);
-  void __execute_a079(OutputType *output, InputType *input,
-      WeightsType *weights, BiasType *bias);
-  void __execute_a07b(OutputType *output, InputType *input,
       WeightsType *weights, BiasType *bias);
 
   void set_scratch_buffers(void *base);
@@ -133,26 +118,6 @@ private:
   WeightsType *bweights_;
   OutputType *boutput_;
 };
-
-// fp32-f32f32f32
-template class elx_conv_wino_t<conv::FP32, conv_impl::FP32, 4, 3, 16, ISA_SKX_AVX512>;
-template class elx_conv_wino_t<conv::FP32, conv_impl::FP32, 5, 3, 16, ISA_SKX_AVX512>;
-template class elx_conv_wino_t<conv::FP32, conv_impl::FP32, 6, 3, 16, ISA_SKX_AVX512>;
-template class elx_conv_wino_t<conv::FP32, conv_impl::FP32, 7, 3, 16, ISA_SKX_AVX512>;
-
-// fp32-f16f16f16
-template class elx_conv_wino_t<conv::FP32, conv_impl::FP32_F16iwo, 4, 3, 16, ISA_SKX_AVX512>;
-template class elx_conv_wino_t<conv::FP32, conv_impl::FP32_F16iwo, 5, 3, 16, ISA_SKX_AVX512>;
-template class elx_conv_wino_t<conv::FP32, conv_impl::FP32_F16iwo, 6, 3, 16, ISA_SKX_AVX512>;
-template class elx_conv_wino_t<conv::FP32, conv_impl::FP32_F16iwo, 7, 3, 16, ISA_SKX_AVX512>;
-
-#ifdef ENABLE_USER_FP16
-// fp16-f32f16f16
-template class elx_conv_wino_t<conv::FP16, conv_impl::FP32_F16wob, 4, 3, 16, ISA_SKX_AVX512>;
-template class elx_conv_wino_t<conv::FP16, conv_impl::FP32_F16wob, 5, 3, 16, ISA_SKX_AVX512>;
-template class elx_conv_wino_t<conv::FP16, conv_impl::FP32_F16wob, 6, 3, 16, ISA_SKX_AVX512>;
-template class elx_conv_wino_t<conv::FP16, conv_impl::FP32_F16wob, 7, 3, 16, ISA_SKX_AVX512>;
-#endif
 
 }  // namespace euler
 #endif  // __ELX_CONV_WINO_HPP__
